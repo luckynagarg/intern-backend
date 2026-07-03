@@ -1,0 +1,185 @@
+/**
+ * Resume creation (Premium only):
+ * - Student enters resume details
+ * - System sends OTP to registered email
+ * - After OTP verification, Razorpay payment is processed
+ * - After payment verification, a professional resume PDF is generated and attached to the profile
+ */
+
+const express = require('express');
+const router = express.Router();
+
+const asyncHandler = require('../middleware/asyncHandler');
+const { verifyFirebaseIdToken } = require('../middleware/authFirebase');
+
+const subscriptionService = require('../services/subscriptionService');
+const { createResumePurchase, verifyResumeOtp, markResumePaymentAndGenerate } = require('../services/resumeService');
+const { getRazorpayInstance } = require('../services/razorpayService');
+const PaymentTransaction = require('../Model/PaymentTransaction');
+
+const { badRequest, forbidden, notFound } = require('../utils/httpErrors');
+const crypto = require('crypto');
+
+const RESUME_PRICE_INR = 50;
+const RESUME_CURRENCY = process.env.RAZORPAY_CURRENCY || 'INR';
+
+function normalizePlanKey(planKey) {
+  return String(planKey || '').toLowerCase();
+}
+
+function isPremiumSubscription(planKey, status) {
+  // premium = not free (any of bronze/silver/gold) and active
+  if (status !== 'active') return false;
+  return normalizePlanKey(planKey) !== 'free';
+}
+
+router.post('/purchase/start', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const { resumeData, photoUrl } = req.body;
+
+  const userId = req.user.uid;
+  const email = req.user.email;
+
+  if (!email) throw badRequest('Email not found in authenticated user profile.');
+
+  const sub = await subscriptionService.getActivePlanAndQuota(userId);
+  if (!isPremiumSubscription(sub.planKey, sub.subscriptionStatus)) {
+    throw forbidden('Resume creation is available only under the premium plan.');
+  }
+
+  const { resumeId, otpExpiresAt } = await createResumePurchase({
+    userId,
+    email,
+    resumeData,
+    photoUrl,
+  });
+
+  return res.json({ success: true, data: { resumeId, otpExpiresAt } });
+}));
+
+router.post('/purchase/otp/verify', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const { resumeId, otp } = req.body;
+  if (!resumeId || !otp) throw badRequest('resumeId and otp are required.');
+
+  const userId = req.user.uid;
+  const email = req.user.email;
+
+  const result = await verifyResumeOtp({ userId, email, otp, resumeId });
+  return res.json({ success: true, data: result });
+}));
+
+router.post('/purchase/razorpay/create-order', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const { resumeId } = req.body;
+  if (!resumeId) throw badRequest('resumeId is required.');
+
+  const Resume = require('../Model/Resume');
+  const resume = await Resume.findOne({ _id: resumeId, userId: req.user.uid });
+  if (!resume) throw notFound('Resume not found.');
+  if (resume.status !== 'otp_verified') {
+    throw forbidden('OTP verification required before payment.');
+  }
+
+  const amountPaise = RESUME_PRICE_INR * 100;
+
+  const razorpay = getRazorpayInstance();
+  const order = await razorpay.orders.create({
+    amount: amountPaise,
+    currency: RESUME_CURRENCY,
+    receipt: `resume_${req.user.uid}_${resumeId}_${Date.now()}`,
+    payment_capture: 1,
+  });
+
+  // Store a dedicated payment attempt using existing PaymentTransaction model.
+  // planKey set to 'resume' to distinguish from subscription plans.
+  const txn = await PaymentTransaction.create({
+    userId: req.user.uid,
+    planKey: 'resume',
+    amount: RESUME_PRICE_INR,
+    currency: RESUME_CURRENCY,
+    razorpayOrderId: order.id,
+    razorpayPaymentId: null,
+    razorpaySignature: null,
+    status: 'created',
+    invoiceNumber: null,
+  });
+
+  return res.json({
+    success: true,
+    data: {
+      orderId: order.id,
+      amount: RESUME_PRICE_INR,
+      currency: RESUME_CURRENCY,
+      transactionId: txn._id,
+      resumeId,
+    },
+  });
+}));
+
+router.post('/purchase/razorpay/verify', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const { resumeId, razorpayOrderId, razorpayPaymentId, razorpaySignature, planKey } = req.body;
+
+  if (!resumeId || !razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+    throw badRequest('resumeId, razorpayOrderId, razorpayPaymentId, razorpaySignature are required.');
+  }
+
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!secret) throw new Error('Razorpay secret not configured.');
+
+  // Verify signature
+  const body = `${razorpayOrderId}|${razorpayPaymentId}`;
+  const expectedSignature = crypto.createHmac('sha256', secret).update(body).digest('hex');
+
+  if (expectedSignature !== razorpaySignature) {
+    throw badRequest('Payment verification failed. Please try again.');
+  }
+
+  // Mark txn verified
+  const txn = await PaymentTransaction.findOne({ userId: req.user.uid, razorpayOrderId });
+  if (!txn) throw badRequest('Payment order not found.');
+
+  txn.status = 'verified';
+  txn.razorpayPaymentId = razorpayPaymentId;
+  txn.razorpaySignature = razorpaySignature;
+  txn.verifiedAt = new Date();
+  await txn.save();
+
+  // Generate resume after successful payment verification
+  const result = await markResumePaymentAndGenerate({
+    resumeId,
+    userId: req.user.uid,
+    razorpayPayload: { razorpayOrderId, razorpayPaymentId, razorpaySignature },
+    paymentMeta: { transactionId: txn._id },
+  });
+
+  return res.json({ success: true, data: result });
+}));
+
+router.get('/my-resumes', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const Resume = require('../Model/Resume');
+  const resumes = await Resume.find({ userId: req.user.uid })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .lean();
+
+  res.json({ success: true, data: resumes });
+}));
+
+router.get('/resumes/:resumeId/download', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const Resume = require('../Model/Resume');
+
+  const resume = await Resume.findOne({ _id: req.params.resumeId, userId: req.user.uid });
+  if (!resume) throw notFound('Resume not found.');
+  if (!resume.resumePdfPath) throw notFound('Resume PDF not generated yet.');
+
+  if (!fs.existsSync(resume.resumePdfPath)) throw notFound('Resume file not found on server.');
+
+  res.setHeader('Content-Type', 'application/octet-stream');
+  const fileName = `resume_${resume._id}`;
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}.pdf"`);
+
+  return fs.createReadStream(resume.resumePdfPath).pipe(res);
+}));
+
+module.exports = router;
+
