@@ -30,8 +30,11 @@ const corsAllowedOriginsFromEnv = process.env.CORS_ALLOWED_ORIGINS
 // Backward compatible defaults (only used if env var is not set)
 const defaultAllowedOrigins = [
   "http://localhost:3000",
+  "http://localhost:3001",
   "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
   "http://192.168.1.8:3000",
+  "http://192.168.1.8:3001",
   "https://internarea-nine.vercel.app",
 ];
 
