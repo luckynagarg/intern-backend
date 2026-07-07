@@ -42,6 +42,15 @@ router.use("/application", application);
 // Public/community endpoints
 router.use("/public", publicRoutes);
 
+// Notifications (user-specific; requires Firebase auth)
+const notifications = require('./notifications');
+router.use('/notifications', notifications);
+
+// Search endpoints (public/unauthed)
+const search = require('./search');
+router.use('/search', search);
+
+
 // Password recovery endpoints
 router.use("/password-recovery", passwordRecovery);
 

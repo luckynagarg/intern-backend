@@ -32,4 +32,3 @@ You can set these in `backend/.env` or when running:
 Notes:
 - This backend project appears to be Firebase-auth based; therefore we seed `userId` values (Firebase-like UIDs) and use them as references for posts/friendships/applications.
 - Notifications/messages are not seeded because there are no corresponding backend models/collections in this codebase.
-
