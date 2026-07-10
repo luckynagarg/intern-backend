@@ -20,21 +20,31 @@ router.post(
   verifyFirebaseIdToken,
   asyncHandler(async (req, res) => {
     const uid = req.user?.uid;
-    if (!uid) throw badRequest('Unauthorized');
+    const reqUrl = req.originalUrl;
 
-    const name = safeString(req.user?.name || null);
-    const email = safeString(req.user?.email || null);
-    // Firebase token decoded claims may not include photoURL; frontend already has it from client.
-    const photo = safeString(req.body?.photo ?? null);
-
-    // NOTE: We accept optional photo from body to align with current frontend dispatch.
-    // Security: this is only cached; the source of truth for uid is token.
+    const logBase = () => ({
+      url: reqUrl,
+      userId: uid || null,
+    });
 
     try {
+      if (!uid) {
+        // Auth middleware should normally guarantee uid.
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+          error: { message: 'Unauthorized' },
+          ...logBase(),
+        });
+      }
+
+      const name = safeString(req.user?.name ?? null);
+      const email = safeString(req.user?.email ?? null);
+      const photo = safeString(req.body?.photo ?? null);
+
       const existing = await UserProfile.findOne({ firebaseUid: uid }).lean();
 
       if (existing) {
-        // Do not overwrite existing fields aggressively.
         const patch = {};
         if (name && !existing.name) patch.name = name;
         if (email && !existing.email) patch.email = email;
@@ -51,7 +61,8 @@ router.post(
         return res.status(200).json({
           success: true,
           message: 'Profile ready',
-          data: updated,
+          data: updated || existing,
+          ...logBase(),
         });
       }
 
@@ -71,22 +82,31 @@ router.post(
         privacy: 'public',
       });
 
-      return res.status(201).json({
+      return res.status(200).json({
         success: true,
         message: 'Profile created',
-        data: created.toObject(),
+        data: created?.toObject?.() ?? created,
+        ...logBase(),
       });
     } catch (err) {
-      console.error('profile/bootstrap error:', err);
-      const httpErr = internalServerError(err?.message || 'Internal Server Error');
-      return res.status(httpErr.statusCode).json({
+      // Never throw uncaught exceptions from this endpoint.
+      const message = err?.message ? String(err.message) : 'Internal Server Error';
+      console.error('profile/bootstrap error:', {
+        message,
+        stack: err?.stack,
+        ...logBase(),
+      });
+
+      return res.status(500).json({
         success: false,
-        message: httpErr.message,
-        error: { message: httpErr.message },
+        message: 'Internal Server Error',
+        error: { message },
+        ...logBase(),
       });
     }
   })
 );
 
 module.exports = router;
+
 
