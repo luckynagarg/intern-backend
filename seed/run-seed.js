@@ -27,11 +27,11 @@ async function main() {
     process.exit(1);
   }
 
-  const countUsers = Number(SEED_COUNT_USERS || 20);
+  const countUsers = Number(SEED_COUNT_USERS || 220);
   const countJobs = Number(SEED_COUNT_JOBS || 30);
   const countInternships = Number(SEED_COUNT_INTERNSHIPS || 60);
-  const countPosts = Number(SEED_COUNT_POSTS || 12); // match user request for now
-  const countApplications = Number(SEED_COUNT_APPLICATIONS || 120);
+  const countPosts = Number(SEED_COUNT_POSTS || 240); // demo-friendly posts (200+)
+  const countApplications = Number(SEED_COUNT_APPLICATIONS || 220);
 
   const conn = await mongoose.connect(uri);
   console.log('Connected:', conn.connection.host);
@@ -111,11 +111,12 @@ async function main() {
 
   const applications = [];
   for (let i = 0; i < countApplications; i++) {
-    const doc = require('./generators/applications').generateApplicationDoc({
+    const doc = require('./generators/applications').generateApplications({
       users,
       internships: internshipById,
       resumes: appResumes,
-    });
+      count: 1,
+    })[0];
     // ensure internship id exists
     if (!doc.Application) continue;
     applications.push(doc);
