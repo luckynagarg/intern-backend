@@ -4,9 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "nodemon index.js",
-    "seed": "node seed/run-seed.js",
-    "seed:clear": "SEED_CLEAR=true node seed/run-seed.js"
+    "start": "nodemon index.js"
   },
   "keywords": [],
   "author": "",

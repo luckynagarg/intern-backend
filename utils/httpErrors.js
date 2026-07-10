@@ -10,9 +10,6 @@ function badRequest(message, details) {
   return new HttpError(400, message, details);
 }
 
-// Keep for backward compatibility in case some routes still call notFound/forbidden/etc.
-
-
 function forbidden(message, details) {
   return new HttpError(403, message, details);
 }

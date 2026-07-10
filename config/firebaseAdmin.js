@@ -1,54 +1,41 @@
 const admin = require('firebase-admin');
 
-function getServiceAccountFromEnv() {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (!raw) return null;
-
-  // Some platforms may provide escaped newlines; Firebase service account JSON expects real \n.
-  const normalized = String(raw).replace(/\\n/g, '\n');
-
-  try {
-    return JSON.parse(normalized);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `[firebaseAdmin] Failed to JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT): ${message}`
-    );
-  }
-}
-
+let initialized = false;
 
 function initFirebaseAdmin() {
-  // Initialize Firebase Admin only once.
-  if (admin.apps.length) return admin;
+  if (initialized) return admin;
 
-  const serviceAccount = getServiceAccountFromEnv();
-  if (!serviceAccount) {
-    // On Render, missing/invalid FIREBASE_SERVICE_ACCOUNT is fatal for auth.
-    // We return uninitialized admin so callers can handle it (and we avoid crashes).
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+
+  // In local dev/test environments, Firebase Admin credentials may be absent.
+  // Avoid crashing the entire server; consumers will fail with clear runtime
+  // errors when they actually need Firebase Admin.
+  if (!serviceAccountJson && !serviceAccountPath) {
     console.warn(
-      '[firebaseAdmin] Missing FIREBASE_SERVICE_ACCOUNT. Firebase Admin will not be initialized.'
+      "[firebaseAdmin] Missing FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_PATH. Firebase Admin will not be initialized."
     );
     return admin;
   }
 
-  const credential = admin.credential.cert(serviceAccount);
+
+  let credential;
+  if (serviceAccountJson) {
+    const parsed = JSON.parse(serviceAccountJson);
+    credential = admin.credential.cert(parsed);
+  } else {
+    // Lazy require so dev without file doesn't crash module load.
+    const sa = require(serviceAccountPath);
+    credential = admin.credential.cert(sa);
+  }
 
   admin.initializeApp({
     credential,
   });
 
+  initialized = true;
   return admin;
 }
 
-function assertFirebaseAdminInitialized() {
-  // Useful for auth middleware to distinguish misconfiguration (should be 500) vs bad token (401).
-  if (!admin.apps.length) {
-    throw new Error('[firebaseAdmin] Firebase Admin is not initialized');
-  }
-}
-
-
 module.exports = { initFirebaseAdmin, admin };
-
 

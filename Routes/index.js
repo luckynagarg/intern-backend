@@ -42,21 +42,6 @@ router.use("/application", application);
 // Public/community endpoints
 router.use("/public", publicRoutes);
 
-// Notifications (user-specific; requires Firebase auth)
-const notifications = require('./notifications');
-router.use('/notifications', notifications);
-
-// Friends (user-specific; requires Firebase auth)
-const friends = require('./friends');
-router.use('/friends', friends);
-
-
-// Search endpoints (public/unauthed)
-const search = require('./search');
-router.use('/search', search);
-
-
-
 // Password recovery endpoints
 router.use("/password-recovery", passwordRecovery);
 
@@ -69,12 +54,7 @@ router.use("/login", login);
 // Premium resume creation
 router.use('/resume', resumeCreation);
 
-// User profile bootstrap (lazy creation)
-const profile = require('./profile');
-router.use('/profile', profile);
-
 module.exports = router;
-
 
 
 
