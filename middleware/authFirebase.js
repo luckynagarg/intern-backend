@@ -36,10 +36,18 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
 
   // Decode & verify the token signature.
   // This is the critical step that guarantees req.user.uid is authentic.
-// Ensure firebase-admin is initialized when this middleware is actually used.
-initFirebaseAdmin();
+  // Ensure firebase-admin is initialized when this middleware is actually used.
+  initFirebaseAdmin();
 
-  const decoded = await require('firebase-admin').auth().verifyIdToken(token);
+  let decoded;
+  try {
+    decoded = await require('firebase-admin').auth().verifyIdToken(token);
+  } catch (e) {
+    // If firebase-admin wasn't initialized due to missing env vars,
+    // return a clear client error instead of crashing.
+    throw unauthorized('Firebase Admin not initialized or token verification failed.');
+  }
+
 
 
   if (!decoded || !decoded.uid) {

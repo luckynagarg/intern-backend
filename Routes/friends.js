@@ -4,7 +4,7 @@ const router = express.Router();
 const asyncHandler = require('../middleware/asyncHandler');
 const { verifyFirebaseIdToken } = require('../middleware/authFirebase');
 
-const { badRequest, forbidden, unauthorized, internalServerError } = require('../utils/httpErrors');
+const { badRequest, forbidden, unauthorized, internalServerError, notFound } = require('../utils/httpErrors');
 
 const FriendRequest = require('../Model/FriendRequest');
 const Friendship = require('../Model/Friendship');
@@ -16,11 +16,8 @@ function toUserId(uid) {
 }
 
 async function ensureProfiles(uids) {
-  // Backward compatibility: some older users may not have a profile doc.
-  // Create lazy skeleton docs so friend/search/chat can work.
   const existing = await UserProfile.find({ firebaseUid: { $in: uids } }).lean();
   const existingSet = new Set(existing.map((x) => x.firebaseUid));
-
   const missing = uids.filter((id) => !existingSet.has(id));
   if (!missing.length) return;
 
@@ -45,41 +42,17 @@ async function ensureProfiles(uids) {
   );
 }
 
-function makeFriendStatusPair(a, b) {
-  // Normalize friend friendship storage: we treat friendship as bidirectional by storing two docs.
-  return [
-    { userId: a, friendId: b },
-    { userId: b, friendId: a },
-  ];
-}
-
 async function areFriends(u1, u2) {
   const c = await Friendship.countDocuments({ userId: u1, friendId: u2, status: 'accepted' });
   return c > 0;
 }
 
-async function getMutualFriendCount(a, b) {
-  // Mutual count based on accepted friendships.
-  // For performance we only pull friendId arrays for the smaller side.
-  const [aFriends, bFriends] = await Promise.all([
-    Friendship.find({ userId: a, status: 'accepted' }).select('friendId').lean(),
-    Friendship.find({ userId: b, status: 'accepted' }).select('friendId').lean(),
-  ]);
-
-  const aSet = new Set(aFriends.map((x) => x.friendId));
-  let mutual = 0;
-  for (const x of bFriends) {
-    if (aSet.has(x.friendId)) mutual += 1;
-  }
-  return mutual;
-}
-
 async function updateFriendshipUsersForAccepted(u1, u2) {
-  // Store in Friendship (compat) + update UserProfile friends list/count.
-  // Ensure both directions exist.
-  const pairs = makeFriendStatusPair(u1, u2);
+  const pairs = [
+    { userId: u1, friendId: u2 },
+    { userId: u2, friendId: u1 },
+  ];
 
-  // Upsert without throwing on duplicates.
   await Promise.all(
     pairs.map(async ({ userId, friendId }) => {
       await Friendship.updateOne(
@@ -90,14 +63,11 @@ async function updateFriendshipUsersForAccepted(u1, u2) {
     })
   );
 
-  // Update UserProfile arrays & counts.
-  // We use $addToSet + $inc where possible. For counts consistency, we compute instead.
   await Promise.all([
     UserProfile.updateOne({ firebaseUid: u1 }, { $addToSet: { friends: u2 } }),
     UserProfile.updateOne({ firebaseUid: u2 }, { $addToSet: { friends: u1 } }),
   ]);
 
-  // Recompute friendCount from friendships for correctness.
   const [u1Count, u2Count] = await Promise.all([
     Friendship.countDocuments({ userId: u1, status: 'accepted' }),
     Friendship.countDocuments({ userId: u2, status: 'accepted' }),
@@ -119,6 +89,44 @@ async function notify(userId, title, message, type = 'social') {
   });
 }
 
+// GET /api/friends/requests?userId=...
+router.get(
+  '/requests',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const caller = toUserId(req.user?.uid);
+    const userId = toUserId(req.query?.userId);
+
+    if (!caller) throw unauthorized('Unauthorized');
+    if (!userId) throw badRequest('userId is required');
+
+    // Only allow caller to view their own requests
+    if (caller !== userId) throw forbidden('You can only view your own requests.');
+
+    await ensureProfiles([userId]);
+
+    const requests = await FriendRequest.find({
+      $or: [
+        { sender: userId },
+        { receiver: userId },
+      ],
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Frontend expects senderId/receiverId/status and createdAtISO-ish.
+    const normalized = requests.map((r) => ({
+      _id: String(r._id),
+      senderId: String(r.sender),
+      receiverId: String(r.receiver),
+      status: r.status,
+      createdAtISO: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+    }));
+
+    return res.status(200).json({ data: normalized });
+  })
+);
+
 // POST /api/friends/request
 router.post(
   '/request',
@@ -129,25 +137,19 @@ router.post(
 
     if (!sender) throw unauthorized('Unauthorized');
     if (!receiver) throw badRequest('receiver is required');
-
     if (sender === receiver) throw forbidden('Cannot send friend request to yourself.');
 
     await ensureProfiles([sender, receiver]);
 
-    // Cannot send duplicate requests.
     const existingReq = await FriendRequest.findOne({ sender, receiver, status: { $in: ['pending', 'accepted'] } });
     if (existingReq) throw forbidden('Friend request already sent.');
 
-    // Cannot send request if already friends.
     if (await areFriends(sender, receiver)) {
       throw forbidden('You are already friends.');
     }
 
-    // Create pending request.
     const fr = await FriendRequest.create({ sender, receiver, status: 'pending' });
 
-    // Notification: request received.
-    // Need sender display name.
     const senderProfile = await UserProfile.findOne({ firebaseUid: sender }).lean();
     const senderName = senderProfile?.name || senderProfile?.username || 'Someone';
 
@@ -169,7 +171,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const receiver = toUserId(req.user?.uid);
     const requestId = req.body?.requestId;
-    const sender = toUserId(req.body?.sender); // allow alternate flow
+    const sender = toUserId(req.body?.sender);
 
     if (!receiver) throw unauthorized('Unauthorized');
     if (!requestId && !sender) throw badRequest('requestId or sender is required');
@@ -183,14 +185,11 @@ router.post(
     if (!fr) throw notFound('Friend request not found');
     if (fr.status !== 'pending') throw forbidden('Friend request is not pending.');
 
-    // Update friendship
     await updateFriendshipUsersForAccepted(fr.sender, receiver);
 
-    // Update request status
     fr.status = 'accepted';
     await fr.save();
 
-    // Notification: accepted.
     const senderProfile = await UserProfile.findOne({ firebaseUid: fr.sender }).lean();
     const receiverName = (await UserProfile.findOne({ firebaseUid: receiver }).lean())?.name || 'Your friend';
     const senderName = senderProfile?.name || senderProfile?.username || 'Someone';
@@ -255,10 +254,8 @@ router.delete(
 
     if (!userId) throw unauthorized('Unauthorized');
     if (!friendId) throw badRequest('friendId is required');
-
     if (userId === friendId) throw forbidden('Cannot remove yourself.');
 
-    // Only allow remove if they are friends.
     const isFriend = await areFriends(userId, friendId);
     if (!isFriend) throw forbidden('You are not friends.');
 

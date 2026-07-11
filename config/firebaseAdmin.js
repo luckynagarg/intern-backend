@@ -2,35 +2,51 @@ const admin = require('firebase-admin');
 
 let initialized = false;
 
+function safeParseServiceAccountJSON(raw) {
+  if (!raw) return null;
+  if (typeof raw !== 'string') return raw;
+
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  // Support escaped newlines in private_key (\n)
+  const normalized = trimmed.replace(/\\n/g, '\n');
+
+  return JSON.parse(normalized);
+}
+
 function initFirebaseAdmin() {
   if (initialized) return admin;
 
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+  // REQUIRED: only env var. No local JSON file imports.
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
 
-  // In local dev/test environments, Firebase Admin credentials may be absent.
-  // Avoid crashing the entire server; consumers will fail with clear runtime
-  // errors when they actually need Firebase Admin.
-  if (!serviceAccountJson && !serviceAccountPath) {
-    console.warn(
-      "[firebaseAdmin] Missing FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_PATH. Firebase Admin will not be initialized."
-    );
+  if (!serviceAccountJson) {
+    const msg =
+      '[firebaseAdmin] Missing FIREBASE_SERVICE_ACCOUNT env var. Firebase Admin was not initialized.';
+    console.error(msg);
     return admin;
   }
 
+  let parsed;
+  try {
+    parsed = safeParseServiceAccountJSON(serviceAccountJson);
+  } catch (e) {
+    const msg =
+      '[firebaseAdmin] FIREBASE_SERVICE_ACCOUNT is not valid JSON (private_key newlines supported).';
+    console.error(msg, e);
+    return admin;
+  }
 
-  let credential;
-  if (serviceAccountJson) {
-    const parsed = JSON.parse(serviceAccountJson);
-    credential = admin.credential.cert(parsed);
-  } else {
-    // Lazy require so dev without file doesn't crash module load.
-    const sa = require(serviceAccountPath);
-    credential = admin.credential.cert(sa);
+  if (!parsed || !parsed.project_id || !parsed.client_email || !parsed.private_key) {
+    const msg =
+      '[firebaseAdmin] FIREBASE_SERVICE_ACCOUNT JSON is missing required fields: project_id, client_email, private_key.';
+    console.error(msg);
+    return admin;
   }
 
   admin.initializeApp({
-    credential,
+    credential: admin.credential.cert(parsed),
   });
 
   initialized = true;
@@ -38,4 +54,5 @@ function initFirebaseAdmin() {
 }
 
 module.exports = { initFirebaseAdmin, admin };
+
 
