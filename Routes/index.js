@@ -13,6 +13,9 @@ const intern = require("./internship");
 const job = require("./job");
 const application = require("./application.js");
 const publicRoutes = require("./public");
+const debugSeed = require('./debugSeed');
+
+router.use('/debug', debugSeed);
 const subscription = require("./subscription");
 const passwordRecovery = require("./passwordRecovery");
 const login = require("./login");
