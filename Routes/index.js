@@ -42,6 +42,13 @@ router.use("/job", job);
 // Applications (includes subscription quota enforcement for POST)
 router.use("/application", application);
 
+// Social / notifications
+const friends = require("./friends");
+const notifications = require("./notifications");
+router.use("/friends", friends);
+router.use("/notifications", notifications);
+
+
 // Public/community endpoints
 router.use("/public", publicRoutes);
 
