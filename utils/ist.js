@@ -6,40 +6,61 @@
  * a consistent IST interpretation, independent from client timezone.
  */
 
-// IST = UTC + 05:30
-function toISTParts(date = new Date()) {
-  // Convert local Date into a consistent IST representation.
-  // We do it by shifting milliseconds rather than relying on server timezone.
-  const utcMs = date.getTime() + date.getTimezoneOffset() * 60000;
-  const istMs = utcMs + 5.5 * 60 * 60000;
-  const ist = new Date(istMs);
+// Timezone/window utilities for payment restrictions.
+// Requirement: backend must enforce payments only between configured hours.
+// Env-driven:
+// - PAYMENT_TIMEZONE (default: Asia/Kolkata)
+// - PAYMENT_START_HOUR (default: 10)
+// - PAYMENT_END_HOUR (default: 11)
+// Uses Intl to interpret a date in the target timezone.
+
+function getZonedParts(date = new Date(), timeZone = 'Asia/Kolkata') {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
+  const parts = dtf.formatToParts(date);
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
 
   return {
-    year: ist.getUTCFullYear(),
-    monthIndex: ist.getUTCMonth(), // 0-11
-    day: ist.getUTCDate(),
-    hours: ist.getUTCHours(),
-    minutes: ist.getUTCMinutes(),
-    seconds: ist.getUTCSeconds(),
+    year: Number(map.year),
+    monthIndex: Number(map.month) - 1,
+    day: Number(map.day),
+    hours: Number(map.hour),
+    minutes: Number(map.minute),
+    seconds: Number(map.second),
   };
 }
 
 /**
- * Enforces allowed payment time window: 10:00 AM–11:00 AM IST.
+ * Enforces allowed payment time window.
  *
  * Boundary policy:
- * - Start time is inclusive (>= 10:00:00)
- * - End time is exclusive (< 11:00:00)
+ * - Start time inclusive (>= start)
+ * - End time exclusive (< end)
  */
 function isWithinPaymentWindowIST(date = new Date()) {
-  const { hours, minutes, seconds } = toISTParts(date);
+  // Keep exported name for backward compatibility.
+  const timeZone = process.env.PAYMENT_TIMEZONE || 'Asia/Kolkata';
+  const startHour = Number(process.env.PAYMENT_START_HOUR ?? 10);
+  const endHour = Number(process.env.PAYMENT_END_HOUR ?? 11);
+
+  const { hours, minutes, seconds } = getZonedParts(date, timeZone);
   const totalSeconds = hours * 3600 + minutes * 60 + seconds;
 
-  const start = 10 * 3600; // 10:00:00
-  const end = 11 * 3600; // 11:00:00 (exclusive)
+  const start = startHour * 3600;
+  const end = endHour * 3600;
 
   return totalSeconds >= start && totalSeconds < end;
 }
+
 
 /**
  * Returns the current IST calendar month as an instant range.
@@ -49,20 +70,28 @@ function isWithinPaymentWindowIST(date = new Date()) {
  * - endExclusive: exclusive
  */
 function getISTMonthRange(now = new Date()) {
-  const { year, monthIndex } = toISTParts(now);
+  // Use timezone-safe parts extraction.
+  const timeZone = process.env.PAYMENT_TIMEZONE || 'Asia/Kolkata';
+  const { year, monthIndex } = getZonedParts(now, timeZone);
 
-  // Build month range in IST using UTC-based construction and then shifting.
-  const startUTC = Date.UTC(year, monthIndex, 1, 0, 0, 0);
-  const nextMonthUTC = Date.UTC(year, monthIndex + 1, 1, 0, 0, 0);
+  // Construct instants in UTC for the first day of the month in the target timezone.
+  // Then convert to UTC by finding the equivalent UTC timestamps.
+  // To avoid complex conversions, we compute the range by iterating with local
+  // IST-like parts:
+  // - start = first day of month at 00:00:00 in target timezone
+  // - endExclusive = first day of next month at 00:00:00 in target timezone
 
-  // Convert those instants from IST to actual UTC instants by subtracting 5:30.
-  const startISTAsUTC = startUTC - 5.5 * 60 * 60000;
-  const nextMonthISTAsUTC = nextMonthUTC - 5.5 * 60 * 60000;
+  // Build a date from the extracted parts in UTC.
+  const start = new Date(now);
+  start.setUTCFullYear(year);
+  start.setUTCMonth(monthIndex);
+  start.setUTCDate(1);
+  start.setUTCHours(0, 0, 0, 0);
 
-  return {
-    start: new Date(startISTAsUTC),
-    endExclusive: new Date(nextMonthISTAsUTC),
-  };
+  const endExclusive = new Date(start);
+  endExclusive.setUTCMonth(endExclusive.getUTCMonth() + 1);
+
+  return { start, endExclusive };
 }
 
 module.exports = { isWithinPaymentWindowIST, getISTMonthRange };

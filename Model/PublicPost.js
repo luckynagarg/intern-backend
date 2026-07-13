@@ -6,13 +6,23 @@ const PublicPostSchema = new mongoose.Schema({
     name: { type: String },
     photo: { type: String },
   },
+
   caption: { type: String, default: "" },
-  media: {
-    mediaType: { type: String, enum: ["image", "video"], required: true },
-    url: { type: String, required: true },
-  },
+
+  // Support multiple images/videos per post.
+  media: [
+    {
+      mediaType: { type: String, enum: ["image", "video"], required: true },
+      url: { type: String, required: true },
+    },
+  ],
+
+  // Optional; can be provided by client or derived later.
+  hashtags: { type: [String], default: [] },
+
   createdAt: { type: Date, default: Date.now },
 });
 
 module.exports = mongoose.model("PublicPost", PublicPostSchema);
+
 

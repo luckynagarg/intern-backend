@@ -18,10 +18,12 @@ const {
   extractDeviceName,
   getDeviceNetworkIp,
   isMobileAllowedNowIST,
+  isChromeOtpPolicyEnabled,
   createLoginAttempt,
   issueEmailOtpChallenge,
   verifyEmailOtp,
 } = require("../services/loginSecurityService");
+
 
 const { sendLoginOtpEmail } = require("../services/loginEmailOtpService");
 
@@ -67,26 +69,73 @@ router.post(
       userAgent,
     } = getLoginMetaFromRequest(req);
 
+    const normalizedLoginMethod =
+      loginMethod || (emailAddress ? "Google Sign-In" : "Unknown");
+
     // Enforce mobile restriction (backend enforced).
     if (deviceType === "Mobile") {
+
       const allowed = isMobileAllowedNowIST(new Date());
       if (!allowed) {
+        // Record BLOCKED attempt (never change response)
+        await createLoginAttempt({
+          userId,
+          firebaseUid: req.user?.uid,
+          fullName,
+          emailAddress,
+          browserType,
+          browserVersion,
+          operatingSystem,
+          deviceType,
+          deviceName,
+          ipAddress,
+          userAgent,
+          loginMethod: normalizedLoginMethod,
+          loginStatus: "Failed",
+
+          status: "BLOCKED",
+          otpVerified: false,
+          failureReason: "Outside allowed login time",
+        }).catch(() => {});
+
         // Exact message required by prompt
         throw forbidden("Mobile login is allowed only between 10:00 AM and 1:00 PM IST.");
       }
     }
 
-    const normalizedLoginMethod =
-      loginMethod ||
-      (emailAddress ? "Google Sign-In" : "Unknown");
+
+
+
 
     // If Chrome: require email OTP
     const isChrome = browserType === "Google Chrome";
 
     if (isChrome) {
       if (!emailAddress) {
+        // record failed login for audit, but keep existing behavior
+        await createLoginAttempt({
+          userId,
+          firebaseUid: req.user?.uid,
+          fullName,
+          emailAddress,
+          browserType,
+          browserVersion,
+          operatingSystem,
+          deviceType,
+          deviceName,
+          ipAddress,
+          userAgent,
+          loginMethod: normalizedLoginMethod,
+          loginStatus: "Failed",
+
+          status: "FAILED",
+          otpVerified: false,
+          failureReason: "Chrome OTP requires email",
+        }).catch(() => {});
+
         throw badRequest("Email address is required for Chrome OTP verification.");
       }
+
 
       // Generate OTP + persist
       const { otp } = await issueEmailOtpChallenge({ userId, email: emailAddress });
@@ -157,7 +206,44 @@ router.post(
     if (!emailAddress) throw badRequest("Email address is required.");
 
     // Verify OTP (single-use)
-    await verifyEmailOtp({ userId, email: emailAddress, otp });
+    try {
+      await verifyEmailOtp({ userId, email: emailAddress, otp });
+    } catch (err) {
+      // Record OTP verification failure, then preserve existing behavior
+      const {
+        browserType,
+        browserVersion,
+        operatingSystem,
+        deviceType,
+        deviceName,
+        ipAddress,
+        userAgent,
+      } = getLoginMetaFromRequest(req);
+
+      await createLoginAttempt({
+        userId,
+        firebaseUid: req.user?.uid,
+        fullName,
+        emailAddress,
+        browserType,
+        browserVersion,
+        operatingSystem,
+        deviceType,
+        deviceName,
+        ipAddress,
+        userAgent,
+        loginMethod: 'google',
+        loginStatus: 'Failed',
+
+        status: 'FAILED',
+        otpVerified: false,
+        failureReason: 'OTP verification failed',
+      }).catch(() => {});
+
+
+      throw err;
+    }
+
 
     const {
       browserType,
@@ -268,18 +354,29 @@ router.get(
       .lean();
 
     const formatted = items.map((x) => ({
-      id: x._id,
-      loginDate: x.loginDate,
       loginTime: x.loginTime,
-      browser: `${x.browserType}${x.browserVersion ? " " + x.browserVersion : ""}`.trim(),
+      logoutTime: x.logoutTime || null,
+      browser: x.browser || x.browserType || '',
+      browserVersion: x.browserVersion || '',
+
       operatingSystem: x.operatingSystem,
       deviceType: x.deviceType,
+      deviceName: x.deviceName || '',
       ipAddress: x.ipAddress,
-      loginMethod: x.loginMethod,
-      loginStatus: x.loginStatus,
+      country: x.country || '',
+      city: x.city || '',
+      loginMethod: x.loginMethod || x.loginMethodRaw || '',
+      status: x.status || x.loginStatus || '',
+      failureReason: x.failureReason || '',
+      otpVerified: !!x.otpVerified,
+
+      // backward-compatible extras
+      id: x._id,
+      loginDate: x.loginDate,
       createdAt: x.createdAt,
       updatedAt: x.updatedAt,
     }));
+
 
     return res.status(200).json({
       success: true,

@@ -91,14 +91,32 @@ async function verifyOtpAgainstHash(otp, otpHash) {
 
 
 /**
- * Determines if daily reset restriction has been satisfied.
- *
- * @param {Date|null|undefined} lastRequestAt
+ * Determines if daily reset restriction has been satisfied using Asia/Kolkata IST calendar day.
+ * Requirement: once per IST calendar day, not a rolling 24h window.
  */
 function isDailyResetAllowed(lastRequestAt) {
   if (!lastRequestAt) return true;
-  return Date.now() - lastRequestAt.getTime() >= PASSWORD_RESET_DAILY_LIMIT_MS;
+
+  const timeZone = process.env.PAYMENT_TIMEZONE || 'Asia/Kolkata';
+
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const lastParts = fmt.formatToParts(lastRequestAt);
+  const nowParts = fmt.formatToParts(new Date());
+
+  const toKey = (parts) => {
+    const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+    return `${map.year}-${map.month}-${map.day}`;
+  };
+
+  return toKey(nowParts) !== toKey(lastParts);
 }
+
 
 /**
  * Creates or updates a PasswordRecovery record for a user.

@@ -244,6 +244,124 @@ router.post(
   })
 );
 
+// GET /api/friends/search?q=...
+router.get(
+  "/search",
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const caller = toUserId(req.user?.uid);
+    const qRaw = req.query?.q;
+
+    if (!caller) throw unauthorized("Unauthorized");
+
+    const q = String(qRaw || "").trim();
+    if (!q) {
+      return res.status(200).json({ data: [] });
+    }
+
+    // Only search within authenticated user's accepted friends
+    const friendIds = await Friendship.find({ userId: caller, status: "accepted" })
+      .select({ friendId: 1, _id: 0 })
+      .lean();
+
+    const ids = friendIds.map((x) => x.friendId).filter(Boolean);
+    if (!ids.length) return res.status(200).json({ data: [] });
+
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(escaped, "i");
+
+    // Search across friend profile fields and friendship nickname
+    const friends = await Friendship.aggregate([
+      { $match: { userId: caller, status: "accepted", friendId: { $in: ids } } },
+      {
+        $lookup: {
+          from: "userprofiles",
+          localField: "friendId",
+          foreignField: "firebaseUid",
+          as: "profile",
+        },
+      },
+      // Ensure we only return matches where the friend profile exists.
+      { $match: { "profile.firebaseUid": { $exists: true, $ne: null } } },
+      { $unwind: { path: "$profile", preserveNullAndEmptyArrays: true } },
+      {
+        $match: {
+          $or: [
+            { "profile.name": { $regex: re } },
+            { "profile.username": { $regex: re } },
+            { nickname: { $regex: re } },
+            { "profile.email": { $regex: re } },
+          ],
+        },
+      },
+      { $limit: 20 },
+      {
+        $project: {
+          _id: 1,
+          name: "$profile.name",
+          username: "$profile.username",
+          nickname: "$nickname",
+          photo: "$profile.photo",
+          headline: "$profile.headline",
+          isFriend: { $literal: true },
+        },
+      },
+    ]);
+
+    // Ensure required fields exist with safe defaults
+    const normalized = (friends || []).map((f) => ({
+      _id: String(f._id),
+      name: f.name || null,
+      username: f.username || null,
+      nickname: f.nickname || null,
+      photo: f.photo || null,
+      headline: f.headline || null,
+      isFriend: !!f.isFriend,
+    }));
+
+    return res.status(200).json({ data: normalized });
+  })
+);
+
+// PATCH /api/friends/:friendId/nickname
+router.patch(
+  "/:friendId/nickname",
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const caller = toUserId(req.user?.uid);
+    const friendId = toUserId(req.params?.friendId);
+    let nickname = req.body?.nickname;
+
+    if (!caller) throw unauthorized("Unauthorized");
+    if (!friendId) throw badRequest("friendId is required");
+    if (caller === friendId) throw forbidden("Cannot set nickname for yourself.");
+
+    // validate friendship ownership & accepted status
+    const friendship = await Friendship.findOne({
+      userId: caller,
+      friendId,
+      status: "accepted",
+    });
+
+    if (!friendship) throw forbidden("You are not friends.");
+
+    nickname = nickname === undefined ? null : String(nickname);
+    nickname = nickname.trim();
+
+    if (!nickname) nickname = null;
+
+    if (nickname && nickname.length > 50) {
+      throw badRequest("Nickname must be 50 characters or less.");
+    }
+
+    friendship.nickname = nickname;
+    await friendship.save();
+
+    // Return updated friendship doc with shape expected by frontend
+    return res.status(200).json({ success: true, data: friendship });
+  })
+);
+
 // DELETE /api/friends/remove
 router.delete(
   '/remove',
@@ -284,4 +402,5 @@ router.delete(
 );
 
 module.exports = router;
+
 

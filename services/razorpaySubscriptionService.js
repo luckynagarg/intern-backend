@@ -103,12 +103,16 @@ async function verifyPaymentAndActivate({ userId, planKey, razorpayOrderId, razo
     return { alreadyActivated: true };
   }
 
-  const secret = process.env.RAZORPAY_KEY_SECRET;
-  if (!secret) {
-    const err = new Error('Razorpay secret not configured.');
-    err.statusCode = 500;
-    throw err;
-  }
+  const secret = (() => {
+    const v = process.env.RAZORPAY_KEY_SECRET;
+    if (!v) {
+      const err = new Error('Missing Razorpay environment variable: RAZORPAY_KEY_SECRET');
+      err.statusCode = 500;
+      throw err;
+    }
+    return v;
+  })();
+
 
   const body = `${razorpayOrderId}|${razorpayPaymentId}`;
   const expectedSignature = crypto

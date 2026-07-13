@@ -1,23 +1,35 @@
 const Razorpay = require('razorpay');
 
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    const err = new Error(`${name} is not configured.`);
+    err.statusCode = 500;
+    throw err;
+  }
+  return value;
+}
+
 function getRazorpayInstance() {
-  const mode = (process.env.RAZORPAY_MODE || 'test').toLowerCase();
-  const isLive = mode === 'live';
+  // Credentials must come ONLY from server-side environment variables.
+  const missing = [];
+  if (!process.env.RAZORPAY_KEY_ID) missing.push('RAZORPAY_KEY_ID');
+  if (!process.env.RAZORPAY_KEY_SECRET) missing.push('RAZORPAY_KEY_SECRET');
 
-  const key_id = process.env.RAZORPAY_KEY_ID;
-  const key_secret = process.env.RAZORPAY_KEY_SECRET;
-
-  if (!key_id || !key_secret) {
-    throw new Error('Razorpay credentials are not set in environment variables.');
+  if (missing.length) {
+    const err = new Error(`Missing Razorpay environment variable(s): ${missing.join(', ')}`);
+    err.statusCode = 500;
+    throw err;
   }
 
-  // Razorpay constructor uses creds; mode is determined by test/live keys.
-  // Keeping compatibility via env flag only.
+  // Razorpay constructor uses creds; test/live compatibility is handled by which keys
+  // are provided via environment variables.
   return new Razorpay({
-    key_id,
-    key_secret,
+    key_id: requireEnv('RAZORPAY_KEY_ID'),
+    key_secret: requireEnv('RAZORPAY_KEY_SECRET'),
   });
 }
+
 
 module.exports = { getRazorpayInstance };
 

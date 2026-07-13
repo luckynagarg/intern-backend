@@ -104,10 +104,15 @@ app.use((req, res, next) => {
   return next();
 });
 
+// Raw body middleware for webhook signature verification
+const { rawBodyMiddleware } = require('./middleware/rawBody');
+app.post('/api/subscriptions/webhook', rawBodyMiddleware);
+
 // Body parsing
 app.use(bodyParser.json({ limit: "50mb" }));
 app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json());
+
 
 const buildRateLimiter = require("./middleware/rateLimit");
 app.use(buildRateLimiter());

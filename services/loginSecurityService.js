@@ -94,20 +94,37 @@ function formatLoginDateTimeIST(date = new Date()) {
   return { loginDate, loginTime };
 }
 
+const {
+  ENABLE_CHROME_OTP_POLICY,
+  ENABLE_MOBILE_TIME_POLICY,
+  MOBILE_ALLOWED_START_HOUR_IST,
+  MOBILE_ALLOWED_END_HOUR_IST,
+  MOBILE_ALLOWED_START_MINUTE_IST,
+  MOBILE_ALLOWED_END_MINUTE_IST,
+} = require("../config/loginSecurityPolicies");
+
 /**
- * Mobile login restriction: allowed only between 10:00 AM and 1:00 PM IST.
+ * Mobile login restriction: allowed only between a configurable IST window.
  *
- * Policy: inclusive start, exclusive end (<=10:00:00 allowed, >=13:00:00 denied).
+ * Policy: inclusive start, exclusive end.
  */
 function isMobileAllowedNowIST(date = new Date()) {
+  if (!ENABLE_MOBILE_TIME_POLICY) return true;
+
   const { hours, minutes, seconds } = toISTParts(date);
   const totalSeconds = hours * 3600 + minutes * 60 + seconds;
 
-  const start = 10 * 3600;
-  const end = 13 * 3600; // 1:00 PM
+  const start =
+    MOBILE_ALLOWED_START_HOUR_IST * 3600 + MOBILE_ALLOWED_START_MINUTE_IST * 60;
+  const end = MOBILE_ALLOWED_END_HOUR_IST * 3600 + MOBILE_ALLOWED_END_MINUTE_IST * 60;
 
   return totalSeconds >= start && totalSeconds < end;
 }
+
+function isChromeOtpPolicyEnabled() {
+  return ENABLE_CHROME_OTP_POLICY;
+}
+
 
 const OTP_LENGTH = 6;
 const OTP_TTL_MS = 5 * 60 * 1000;
@@ -159,10 +176,21 @@ async function createLoginAttempt({
   loginStatus,
   logoutTime,
   sessionDurationSeconds,
+
+  // new spec-friendly fields (optional)
+  status,
+  failureReason,
+  otpVerified,
+  firebaseUid,
+  name,
+  email,
+  country,
+  city,
 }) {
   const { loginDate, loginTime } = formatLoginDateTimeIST(new Date());
 
   return LoginHistory.create({
+    // legacy
     userId,
     fullName: fullName || "",
     emailAddress: emailAddress || "",
@@ -184,8 +212,22 @@ async function createLoginAttempt({
 
     logoutTime: logoutTime || null,
     sessionDurationSeconds: sessionDurationSeconds || null,
+
+    // spec
+    status,
+    failureReason,
+    otpVerified: otpVerified ?? false,
+
+    firebaseUid,
+    name: name ?? fullName ?? "",
+    email: email ?? emailAddress ?? "",
+
+    browser: browserType || "",
+    country: country || "",
+    city: city || "",
   });
 }
+
 
 async function issueEmailOtpChallenge({ userId, email }) {
   if (!userId) throw badRequest("userId is required");
@@ -259,8 +301,10 @@ module.exports = {
   getDeviceNetworkIp,
   formatLoginDateTimeIST,
   isMobileAllowedNowIST,
+  isChromeOtpPolicyEnabled,
   createLoginAttempt,
   issueEmailOtpChallenge,
   verifyEmailOtp,
 };
+
 

@@ -10,6 +10,7 @@ const mongoose = require("mongoose");
  */
 const LoginHistorySchema = new mongoose.Schema(
   {
+    // --- Backward-compatible fields (already used by existing code) ---
     userId: { type: String, index: true, required: true },
     fullName: { type: String, default: "" },
     emailAddress: { type: String, default: "" },
@@ -49,14 +50,51 @@ const LoginHistorySchema = new mongoose.Schema(
 
     // Session duration in seconds (if logout recorded)
     sessionDurationSeconds: { type: Number, default: null },
+
+    // --- Required fields (for production-ready spec) ---
+    // NOTE: we keep these optional to avoid breaking existing writes.
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+    firebaseUid: { type: String, index: true },
+    name: { type: String, default: '' },
+    email: { type: String, default: '', index: true },
+
+    // loginMethod in spec is generic; keep separate from legacy loginMethod.
+    // (Frontends will read whichever field they need.)
+    // Keep optional.
+    loginMethodRaw: { type: String, default: '' },
+
+    // Spec status values
+    status: {
+      type: String,
+      enum: ['SUCCESS', 'FAILED', 'BLOCKED'],
+      index: true,
+    },
+
+    failureReason: { type: String, default: '' },
+    otpVerified: { type: Boolean, default: false },
+
+    browser: { type: String, default: '' },
+    country: { type: String, default: '' },
+    city: { type: String, default: '' },
+
+    // Keep createdAt for spec (timestamps already provides createdAt).
+    createdAt: { type: Date },
   },
   {
     timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" },
   }
 );
 
+// Indexes requested in spec (plus existing backward-compatible indexes)
+LoginHistorySchema.index({ user: 1 });
+LoginHistorySchema.index({ email: 1 });
+LoginHistorySchema.index({ loginTime: -1 });
+LoginHistorySchema.index({ status: -1 });
+
+// Backward-compatible indexes
 LoginHistorySchema.index({ userId: 1, createdAt: -1 });
 LoginHistorySchema.index({ userId: 1, loginDate: -1, loginTime: -1 });
+
 
 module.exports = mongoose.model("LoginHistory", LoginHistorySchema);
 

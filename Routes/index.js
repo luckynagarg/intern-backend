@@ -55,14 +55,33 @@ router.use("/public", publicRoutes);
 // Password recovery endpoints
 router.use("/password-recovery", passwordRecovery);
 
-// Subscription & billing endpoints
+// Forgot password (generate new random password in Firebase Auth)
+const forgotPassword = require('./forgotPassword');
+router.use('/auth', forgotPassword);
+
+// Subscription & billing endpoints (legacy)
 router.use("/subscription", subscription);
+
+
+// Enterprise subscriptions endpoints (Phase B)
+const subscriptionsV2 = require('./subscriptions');
+router.use('/subscriptions', subscriptionsV2);
+
 
 // Login security (Chrome OTP) & login history
 router.use("/login", login);
 
+// Admin security endpoints
+const adminLoginHistory = require('./adminLoginHistory');
+const adminLoginHistoryExport = require('./adminLoginHistoryExport');
+router.use('/admin', adminLoginHistory);
+router.use('/admin/login-history', adminLoginHistoryExport);
+
+
+
 // Premium resume creation
 router.use('/resume', resumeCreation);
+
 
 module.exports = router;
 
