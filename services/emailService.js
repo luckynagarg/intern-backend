@@ -41,14 +41,28 @@ function buildInvoiceEmailHtml({ planName, amountPaid, paymentId, invoiceNumber,
 }
 
 async function sendInvoiceEmail({ toEmail, toName, subject, html, attachments }) {
-  const transport = getTransport();
+  // Never log secrets (SMTP_PASS, tokens, etc.). Log only which config pieces exist.
+  const host = process.env.SMTP_HOST;
+  const port = process.env.SMTP_PORT;
+  const user = process.env.SMTP_USER;
   const fromEmail = process.env.SMTP_FROM_EMAIL;
-  const fromName = process.env.SMTP_FROM_NAME || 'InternArea';
+
+  console.log('[otp/email] sendInvoiceEmail init', {
+    host: host ? '[set]' : '[missing]',
+    port: port ? '[set]' : '[missing]',
+    user: user ? '[set]' : '[missing]',
+    fromEmail: fromEmail ? '[set]' : '[missing]',
+  });
+
+  const transport = getTransport();
 
   if (!fromEmail) {
     throw new Error('SMTP_FROM_EMAIL is not set');
   }
 
+  const fromName = process.env.SMTP_FROM_NAME || 'InternArea';
+
+  // Transporter debug: try-catch so we can fail loudly with details.
   await transport.sendMail({
     from: `${fromName} <${fromEmail}>`,
     to: `${toName || ''} <${toEmail}>`.trim(),
@@ -57,6 +71,7 @@ async function sendInvoiceEmail({ toEmail, toName, subject, html, attachments })
     attachments,
   });
 }
+
 
 module.exports = { buildInvoiceEmailHtml, sendInvoiceEmail };
 

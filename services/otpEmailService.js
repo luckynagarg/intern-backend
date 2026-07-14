@@ -22,15 +22,25 @@ function buildOtpHtml({ toName, otp }) {
 }
 
 async function sendOtpEmail({ toEmail, toName, otp }) {
+  // Never log OTP value.
+  console.log('[otp/email] sendOtpEmail attempt', {
+    toEmail: toEmail ? '[provided]' : '[missing]',
+    toName: toName ? '[provided]' : '[missing]',
+  });
+
   const html = buildOtpHtml({ toName, otp });
 
+  // Make failures visible to caller.
   await sendInvoiceEmail({
     toEmail,
     toName,
     subject: 'InternArea Resume Creation - OTP Verification',
     html,
   });
+
+  console.log('[otp/email] sendOtpEmail success');
 }
+
 
 async function sendOtpSms({ phoneNumber, otp }) {
   // SMS architecture stub.

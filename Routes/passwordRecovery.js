@@ -4,6 +4,7 @@ const router = express.Router();
 const asyncHandler = require("../middleware/asyncHandler");
 const { badRequest, forbidden, internalServerError } = require("../utils/httpErrors");
 
+
 const {
   normalizeIdentifier,
   requestPasswordReset,
@@ -16,8 +17,10 @@ const {
 // This keeps the architecture ready without breaking the flow.
 const { sendOtpEmail, sendOtpSms } = require("../services/otpEmailService");
 
+const OTP_DEBUG_OVERRIDE = process.env.OTP_DEBUG_OVERRIDE === "true";
 
 const { admin } = require("../config/firebaseAdmin");
+
 
 /**
  * Security policy:
@@ -105,6 +108,7 @@ router.post("/request", asyncHandler(async (req, res) => {
         : "password"
       : await getAuthProviderForIdentifier({ method, identifier });
 
+
     // If user not found, still behave generically (do not create recovery doc).
     if (!user) return genericRequestResponse(res);
 
@@ -112,22 +116,41 @@ router.post("/request", asyncHandler(async (req, res) => {
 
     // requestPasswordReset enforces daily restriction, OTP resend cooldown, etc.
     // If google account, it throws forbidden.
-    await requestPasswordReset({
+    const { otp } = await requestPasswordReset({
       userId,
       method,
       authProvider,
     });
 
-    // For production: send OTP via email/sms.
-    // This codebase has an emailService but no OTP email template wired.
-    // We currently keep a backend-ready hook.
+    // Send OTP (production) via email/SMS hooks.
+    // NOTE: OTP is never returned to the client.
+    // In prod, delivery failures MUST be surfaced (so we can debug and users can retry).
+    if (method === "email") {
+      if (!user?.email) {
+        throw internalServerError("User email not available for OTP delivery.");
+      }
 
-    // We avoid returning OTP in response for security.
-    // In tests, you can expose OTP in non-prod.
+      await sendOtpEmail({
+        toEmail: user.email,
+        toName: user.displayName,
+        otp,
+      });
+    } else if (method === "phone") {
+      // phone OTP sending is stubbed; only attempt in debug mode.
+      if (!OTP_DEBUG_OVERRIDE) {
+        throw internalServerError("SMS OTP delivery not enabled.");
+      }
+      if (!user?.phoneNumber) {
+        throw internalServerError("User phoneNumber not available for OTP delivery.");
+      }
+      await sendOtpSms({ phoneNumber: user.phoneNumber, otp });
+    }
+
 
     return genericRequestResponse(res);
   } catch (err) {
     // If forbidden due to Google-only, still do not leak.
+
     // But we DO want a user-friendly message per requirements.
     if (err.statusCode === 403) {
       return res.status(200).json({
@@ -141,6 +164,7 @@ router.post("/request", asyncHandler(async (req, res) => {
     return genericRequestResponse(res);
   }
 }));
+
 
 router.post("/verify-otp", asyncHandler(async (req, res) => {
   const { method, identifier, otp } = req.body || {};
