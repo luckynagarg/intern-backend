@@ -9,8 +9,10 @@
  * verified tokens.
  */
 const asyncHandler = require('./../middleware/asyncHandler');
-const { initFirebaseAdmin } = require('./../config/firebaseAdmin');
+const { getAdminOrThrow } = require('./../config/firebaseAdmin');
+
 const { unauthorized } = require('./../utils/httpErrors');
+
 
 // Initialize Firebase Admin once (lazy). Avoid eager init so dev can start without creds.
 // auth requirements will trigger initialization when the middleware is actually used.
@@ -36,6 +38,7 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
   const hasBearer = !!header && header.startsWith('Bearer ');
   console.log('[authFirebase] Bearer token exists:', hasBearer);
 
+
   if (!hasBearer) {
     // A missing/invalid header is a client error, not server error.
     throw unauthorized(
@@ -50,11 +53,13 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
   // Decode & verify the token signature.
   // This is the critical step that guarantees req.user.uid is authentic.
   // Ensure firebase-admin is initialized when this middleware is actually used.
-  initFirebaseAdmin();
+  const admin = getAdminOrThrow();
 
   let decoded;
+
   try {
-    decoded = await require('firebase-admin').auth().verifyIdToken(token);
+    decoded = await admin.auth().verifyIdToken(token);
+
     console.log('[authFirebase] verifyIdToken SUCCESS');
     console.log('[authFirebase] decoded uid:', decoded?.uid || null);
   } catch (e) {

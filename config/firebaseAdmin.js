@@ -53,6 +53,21 @@ function initFirebaseAdmin() {
   return admin;
 }
 
-module.exports = { initFirebaseAdmin, admin };
+function getAdminOrThrow() {
+  const a = initFirebaseAdmin();
+  // If initFirebaseAdmin failed due to missing/invalid env, it leaves admin uninitialized.
+  // Detect this by checking Admin app list length.
+  if (!initialized) {
+    throw new Error(
+      '[firebaseAdmin] Firebase Admin not initialized. Provide FIREBASE_SERVICE_ACCOUNT with valid service account JSON.'
+    );
+  }
+  return a;
+}
+
+module.exports = { initFirebaseAdmin, admin, getAdminOrThrow };
+
+
+
 
 
