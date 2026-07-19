@@ -79,6 +79,7 @@ router.post("/posts", async (req, res) => {
 
 router.get("/posts", async (req, res) => {
   try {
+    
     const limit = Math.min(parseInt(req.query.limit || "20", 10), 50);
     const cursor = req.query.cursor;
     const userId = req.query.userId;

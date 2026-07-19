@@ -26,13 +26,26 @@ const { unauthorized } = require('./../utils/httpErrors');
 const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization;
 
-  if (!header || !header.startsWith('Bearer ')) {
+  // Temporary detailed logs for auth auditing.
+  // Do NOT log full token.
+  console.log('[authFirebase] Authorization header received:', !!header);
+  if (header && typeof header === 'string') {
+    console.log('[authFirebase] Authorization header prefix:', header.slice(0, 12));
+  }
+
+  const hasBearer = !!header && header.startsWith('Bearer ');
+  console.log('[authFirebase] Bearer token exists:', hasBearer);
+
+  if (!hasBearer) {
     // A missing/invalid header is a client error, not server error.
-    throw unauthorized('Missing Authorization header.');
+    throw unauthorized(
+      'Missing Authorization header or invalid format (expected: Bearer <token>).'
+    );
   }
 
   const token = header.slice('Bearer '.length).trim();
-  if (!token) throw unauthorized('Missing Firebase ID token.');
+  console.log('[authFirebase] token length:', token?.length || 0);
+  if (!token) throw unauthorized('Missing Firebase ID token (after Bearer).');
 
   // Decode & verify the token signature.
   // This is the critical step that guarantees req.user.uid is authentic.
@@ -42,16 +55,24 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
   let decoded;
   try {
     decoded = await require('firebase-admin').auth().verifyIdToken(token);
+    console.log('[authFirebase] verifyIdToken SUCCESS');
+    console.log('[authFirebase] decoded uid:', decoded?.uid || null);
   } catch (e) {
+    const code = e && e.code ? e.code : null;
+    const msg = (e && (e.message || e.toString())) || 'unknown error';
+
+    console.log('[authFirebase] verifyIdToken FAILURE');
+    console.log('[authFirebase] error code:', code);
+    console.log('[authFirebase] error message:', msg);
+
     // If firebase-admin wasn't initialized due to missing env vars,
     // return a clear client error instead of crashing.
-    throw unauthorized('Firebase Admin not initialized or token verification failed.');
+    throw unauthorized(`Firebase token verification failed: code=${code || 'unknown'} message=${msg}`);
   }
 
-
-
   if (!decoded || !decoded.uid) {
-    throw unauthorized('Invalid Firebase token.');
+    console.log('[authFirebase] decoded missing uid');
+    throw unauthorized('Invalid Firebase token: missing uid/claims.');
   }
 
   // Attach a minimal, trusted identity object for downstream handlers.
@@ -62,7 +83,9 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
     name: decoded.name || null,
     claims: decoded,
     isAdmin:
-      decoded?.admin === true || decoded?.isAdmin === true || decoded?.role === "admin",
+      decoded?.admin === true ||
+      decoded?.isAdmin === true ||
+      decoded?.role === "admin",
     admin: decoded?.admin === true,
   };
 

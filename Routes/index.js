@@ -20,7 +20,7 @@ const subscription = require("./subscription");
 const passwordRecovery = require("./passwordRecovery");
 const login = require("./login");
 const resumeCreation = require("./resumeCreation");
-
+const search = require("./search");
 
 const { verifyFirebaseIdToken } = require("../middleware/authFirebase");
 const { requireAdmin } = require("../middleware/requireAdmin");
@@ -32,12 +32,10 @@ router.use("/admin", (req, res, next) => {
   return verifyFirebaseIdToken(req, res, () => requireAdmin(req, res, next));
 });
 
-
-
-
 // Job & internship CRUD
 router.use("/internship", intern);
 router.use("/job", job);
+
 
 // Applications (includes subscription quota enforcement for POST)
 router.use("/application", application);
@@ -71,6 +69,11 @@ router.use('/subscriptions', subscriptionsV2);
 // Login security (Chrome OTP) & login history
 router.use("/login", login);
 
+// Generic Email OTP authentication (separate module; does not affect /login/*)
+const emailOtpAuth = require('./emailOtpAuth');
+router.use('/email-otp-auth', emailOtpAuth);
+
+
 // Admin security endpoints
 const adminLoginHistory = require('./adminLoginHistory');
 const adminLoginHistoryExport = require('./adminLoginHistoryExport');
@@ -82,8 +85,11 @@ router.use('/admin/login-history', adminLoginHistoryExport);
 // Premium resume creation
 router.use('/resume', resumeCreation);
 
+// Search (internships/jobs/companies)
+router.use('/search', search);
 
 module.exports = router;
+
 
 
 
