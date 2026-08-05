@@ -17,6 +17,7 @@ module.exports.connect = async () => {
       bufferCommands: false,
     });
     console.log("✅ Database is connected");
+    console.log(`✅ Connected to MongoDB: ${mongoose.connection.host}/${mongoose.connection.name}`);
     return { mongoAvailable: true };
   } catch (err) {
     console.warn("⚠️ Database connection failed. Mongo will be treated as unavailable:", err.message);
