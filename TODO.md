@@ -6,26 +6,36 @@ Task: Resolve 503 on protected endpoints, Firebase Admin init failure, and Mongo
 1. **Missing Firebase Admin credentials on Render** — `getRequiredCertFromEnvOrThrow()` throws because
    `FIREBASE_SERVICE_ACCOUNT` / `FIREBASE_PROJECT_ID`+`FIREBASE_CLIENT_EMAIL`+`FIREBASE_PRIVATE_KEY` are not set.
    In `authFirebase.js`, that throw is converted to a **503** via `serviceUnavailable(...)`.
-2. **MongoDB never connects** — `DATABASE_URL` is missing/failing; `mongoose.connect()` has no
+2. **MongoDB never connects** — `DATABASE_URL` is missing/failing; `mongoose.connect()` had no
    `serverSelectionTimeoutMS`, so queries buffer 10s then throw `Operation ... buffering timed out after 10000ms`.
 
+## CRITICAL Env Var Mismatch
+- Backend `.env` defines `FIREBASE_SERVICE_ACCOUNT_PATH` (a file path).
+- `config/firebaseAdmin.js` reads `FIREBASE_SERVICE_ACCOUNT` (JSON string) OR the three individual vars.
+- **`FIREBASE_SERVICE_ACCOUNT_PATH` is never read anywhere in the code** (confirmed via search).
+- Therefore Firebase Admin will ALWAYS fail to initialize regardless of `.env`, producing 503 on protected routes.
+- Fix: set the correct var on Render:
+  - `FIREBASE_SERVICE_ACCOUNT` = full JSON string, OR
+  - `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` (all three).
+
+## Backend env vars needed on Render
+- `DATABASE_URL` (or `MONGO_URI`) — MongoDB connection string.
+- `FIREBASE_SERVICE_ACCOUNT` (JSON) OR the 3 individual vars.
+- `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`.
+- `OTP_HMAC_SECRET`.
+- `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_CURRENCY`.
+- `PORT` (Render sets automatically), `NODE_ENV=production`.
+
 ## Fix Checklist
-- [x] 1. Add `require('dotenv').config()` at the very top of `index.js` so env vars load before any module reads them.
-- [x] 2. Fix `package.json` start script: `node index.js` (production) instead of `nodemon index.js`.
-- [x] 3. Harden `db.js`: add `serverSelectionTimeoutMS` and `bufferCommands: false` so connection failures surface fast.
-- [x] 4. Fix startup order in `index.js`: `await connect()` before `app.listen`; fail fast in production if Mongo is down.
-- [x] 5. Add `unhandledRejection` / `uncaughtException` handlers to avoid silent process crashes.
-- [ ] 6. Deployment (operator action): set Render env vars (FIREBASE_*, DATABASE_URL, RESEND_*, OTP_HMAC_SECRET, RAZORPAY_*) and redeploy.
+- [x] 1. Add `require('dotenv').config()` at the very top of `index.js`.
+- [x] 2. Fix `package.json` start script: `node index.js`; add `dev` script for nodemon.
+- [x] 3. Harden `db.js`: add `serverSelectionTimeoutMS` and `bufferCommands: false`.
+- [x] 4. Fix startup order in `index.js`: fail fast in production if Mongo is down.
+- [x] 5. Add `unhandledRejection` / `uncaughtException` handlers.
+- [ ] 6. Deployment: set correct Render env vars (see above). **Must fix `FIREBASE_SERVICE_ACCOUNT_PATH` → `FIREBASE_SERVICE_ACCOUNT`/individual vars.**
 
 ## Non-goals (per user moderation)
-- No speculative route restructuring.
-- No global buffering disable beyond `bufferCommands: false` on the connection (justified by the timeout symptom).
-- No deprecated Mongoose options (`useNewUrlParser` / `useUnifiedTopology`).
-
-## Verification (completed)
-- [x] All modified files pass `node --check` syntax validation.
-- [x] Module graph loads cleanly: `/api` routes mounted (22 entries), `authFirebase` + `firebaseAdmin` load as functions.
-- [x] `db.js` `connect()` returns `{mongoAvailable:false, reason:"missing DATABASE_URL"}` when no URI.
-- [x] Server boots successfully: `✅ Database is connected` (a `.env` DATABASE_URL is present), Firebase Admin correctly reports missing creds, `Server running on port 5000`.
-- [x] New `uncaughtException` guard caught an `EADDRINUSE` (port 5000) gracefully instead of crashing.
-- [ ] ACTION REQUIRED: The currently-running server (PID 15132, started with old `node index.js`) must be restarted to load the fixed code. Deploy the Render env vars (FIREBASE_*, RESEND_*, OTP_HMAC_SECRET, RAZORPAY_*) and redeploy.
+- No route restructuring.
+- No global buffering disable beyond `bufferCommands: false` (justified by timeout symptom).
+- No deprecated Mongoose options.
+</content>
