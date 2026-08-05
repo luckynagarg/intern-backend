@@ -9,6 +9,10 @@
  * - Connect to MongoDB
  * - Validate SMTP configuration and verify email transport on startup
  */
+// Load environment variables FIRST so every module (db, firebaseAdmin, services)
+// reading process.env at require-time sees the correct values.
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
@@ -22,6 +26,17 @@ const app = express();
 // Security headers via helmet (production-grade defaults)
 const helmet = require("helmet");
 app.use(helmet());
+
+// Global process-level error guards.
+// Prevents a single unhandled promise rejection / uncaught exception from
+// silently crashing the process (which Render would report as 503/unavailable).
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[process] Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[process] Uncaught Exception:", err?.stack || err);
+});
 
 // Render / Express proxy deployments require trust proxy for correct client IP handling.
 // This prevents issues with rate-limit / forwarded-for parsing.
@@ -160,16 +175,26 @@ app.use("/api", router);
 // Error handler must be after routes
 app.use(errorHandler);
 
-// Start server even if Mongo is unavailable.
+// Connect to MongoDB BEFORE listening. In production, fail fast if Mongo is down
+// so Render restarts the service and we never serve traffic against an unconnected DB.
 (async () => {
   const result = await connect();
   app.locals.mongoAvailable = !!result?.mongoAvailable;
 
   if (!result?.mongoAvailable) {
+    const reason = result?.reason || 'unknown';
     console.warn(
-      '[startup] MongoDB is NOT available. Protected routes will return empty data or 500. Reason:',
-      result?.reason || 'unknown'
+      '[startup] MongoDB is NOT available. Reason:',
+      reason
     );
+
+    // In production, a missing/unreachable database is a fatal startup condition.
+    // Render will see the non-zero exit and mark the deploy as failed, signalling
+    // the operator to fix DATABASE_URL before traffic is served.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[startup] Fatal: MongoDB unavailable in production. Exiting.');
+      process.exit(1);
+    }
   }
 
   // Validate Firebase Admin environment on startup.

@@ -1,18 +1,21 @@
 const mongoose = require("mongoose");
-require("dotenv").config();
 
 module.exports.connect = async () => {
   const uri = process.env.DATABASE_URL;
 
-  // Do not hard-fail the server on missing/invalid Mongo.
-  // If Mongo is unavailable, routes will return mock/demo data.
   if (!uri) {
     console.warn("⚠️ DATABASE_URL is undefined. Mongo will be treated as unavailable.");
     return { mongoAvailable: false, reason: "missing DATABASE_URL" };
   }
 
   try {
-    await mongoose.connect(uri);
+    // Fail fast when the cluster is unreachable instead of buffering queries for 10s.
+    // With bufferCommands:false, any query issued before the connection is ready will
+    // immediately throw a MongooseError rather than silently buffering and timing out.
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 15000,
+      bufferCommands: false,
+    });
     console.log("✅ Database is connected");
     return { mongoAvailable: true };
   } catch (err) {

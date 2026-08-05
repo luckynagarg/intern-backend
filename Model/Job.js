@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const JobShcema = new mongoose.Schema({
+const JobSchema = new mongoose.Schema({
   title: String,
   company: String,
   location: String,
@@ -17,4 +17,4 @@ const JobShcema = new mongoose.Schema({
     default: Date.now,
   },
 });
-module.exports = mongoose.model("Job", JobShcema);
+module.exports = mongoose.model("Job", JobSchema);

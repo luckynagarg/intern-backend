@@ -13,11 +13,9 @@ const { getAdminOrThrow } = require('./../config/firebaseAdmin');
 
 const { unauthorized, serviceUnavailable } = require('./../utils/httpErrors');
 
-
 // Initialize Firebase Admin once (lazy). Avoid eager init so dev can start without creds.
 // auth requirements will trigger initialization when the middleware is actually used.
 // (initFirebaseAdmin() will warn and keep firebase-admin uninitialized if creds are missing.)
-
 
 /**
  * Express middleware that verifies Firebase ID tokens.
@@ -38,7 +36,6 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
   const hasBearer = !!header && header.startsWith('Bearer ');
   console.log('[authFirebase] Bearer token exists:', hasBearer);
 
-
   if (!hasBearer) {
     // A missing/invalid header is a client error, not server error.
     throw unauthorized(
@@ -50,7 +47,7 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
   console.log('[authFirebase] token length:', token?.length || 0);
   if (!token) throw unauthorized('Missing Firebase ID token (after Bearer).');
 
-// Decode & verify the token signature.
+  // Decode & verify the token signature.
   // This is the critical step that guarantees req.user.uid is authentic.
   // Ensure firebase-admin is initialized when this middleware is actually used.
   let admin;
@@ -61,7 +58,7 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
     // Fail fast with a clear 503 (Service Unavailable) instead of a generic 500,
     // so the root cause is obvious to both the client and in the logs.
     console.error('[authFirebase] Firebase Admin not initialized:', e?.message);
-throw serviceUnavailable(
+    throw serviceUnavailable(
       'Authentication service is not configured. Contact the administrator.'
     );
   }
@@ -109,5 +106,3 @@ throw serviceUnavailable(
 });
 
 module.exports = { verifyFirebaseIdToken };
-
-

@@ -142,6 +142,121 @@ InternArea - Building Careers, Connecting Talent`;
 }
 
 // ---------------------------------------------------------------------------
+// Forgot Password (Generated Password) Email Template
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds an HTML email delivering a newly generated (letters-only) password.
+ *
+ * @param {Object} options
+ * @param {string} [options.toName] - Recipient's display name
+ * @param {string} options.password - The generated letters-only password
+ * @returns {string} HTML email body
+ */
+function buildForgotPasswordEmailHtml({ toName, password }) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background-color:#f4f7fa;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f7fa;padding:20px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#2563eb,#1d4ed8);padding:30px 40px;text-align:center;">
+              <h1 style="color:#ffffff;font-size:22px;margin:0;font-weight:600;">InternArea</h1>
+              <p style="color:rgba(255,255,255,0.85);font-size:14px;margin:4px 0 0;">Your Gateway to Opportunities</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px;">
+              <h2 style="color:#1e293b;font-size:20px;margin:0 0 8px;">Password Reset</h2>
+              <p style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 4px;">
+                Hi ${toName || 'there'},
+              </p>
+              <p style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 20px;">
+                We received a request to reset your password. A new temporary password has been generated for you below.
+              </p>
+
+              <!-- Password Box -->
+              <div style="background:#f0f5ff;border:2px dashed #2563eb;border-radius:12px;padding:24px;text-align:center;margin:0 0 24px;">
+                <p style="color:#64748b;font-size:13px;margin:0 0 8px;text-transform:uppercase;letter-spacing:1px;">Your New Temporary Password</p>
+                <div style="font-size:28px;font-weight:700;letter-spacing:3px;color:#2563eb;font-family:'Courier New',monospace;background:#ffffff;display:inline-block;padding:12px 24px;border-radius:8px;border:1px solid #bfdbfe;word-break:break-all;">
+                  ${password}
+                </div>
+                <p style="color:#94a3b8;font-size:12px;margin:12px 0 0;">Use this to sign in, then change it from your profile.</p>
+              </div>
+
+              <!-- Security Notice -->
+              <div style="background:#fef2f2;border-left:4px solid #ef4444;border-radius:6px;padding:14px 18px;margin:0 0 20px;">
+                <p style="color:#991b1b;font-size:13px;line-height:1.5;margin:0;">
+                  <strong>⚠ Security Alert:</strong> Never share this password with anyone.
+                  You can use the "Forgot Password" option only once per day.
+                </p>
+              </div>
+
+              <p style="color:#475569;font-size:14px;line-height:1.6;margin:0;">
+                If you didn't request this, please contact support immediately.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Divider -->
+          <tr>
+            <td style="padding:0 40px;">
+              <hr style="border:none;border-top:1px solid #e2e8f0;margin:0;" />
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:24px 40px;text-align:center;">
+              <p style="color:#94a3b8;font-size:12px;line-height:1.6;margin:0 0 8px;">
+                InternArea &bull; Building Careers, Connecting Talent
+              </p>
+              <p style="color:#cbd5e1;font-size:11px;margin:16px 0 0;">
+                This is an automated message. Please do not reply directly to this email.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+/**
+ * Builds plain-text fallback for the forgot-password email.
+ */
+function buildForgotPasswordPlainText({ toName, password }) {
+  return `InternArea - Password Reset
+
+Hi ${toName || 'there'},
+
+We received a request to reset your password. A new temporary password has been generated for you below:
+
+Your New Temporary Password: ${password}
+
+Use this to sign in, then change it from your profile.
+
+⚠ Security Alert: Never share this password with anyone.
+You can use the "Forgot Password" option only once per day.
+
+If you didn't request this, please contact support immediately.
+
+InternArea - Building Careers, Connecting Talent`;
+}
+
+// ---------------------------------------------------------------------------
 // Subscription Invoice Email Template
 // ---------------------------------------------------------------------------
 
@@ -785,6 +900,10 @@ module.exports = {
   // OTP templates
   buildOtpEmailHtml,
   buildOtpPlainText,
+
+  // Forgot-password (generated password) templates
+  buildForgotPasswordEmailHtml,
+  buildForgotPasswordPlainText,
 
   // Invoice templates
   buildInvoiceEmailHtml,

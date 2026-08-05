@@ -7,6 +7,9 @@ const PostLike = require("../Model/PostLike");
 const Friendship = require("../Model/Friendship");
 const DailyPostLimit = require("../Model/DailyPostLimit");
 
+const { verifyFirebaseIdToken } = require("../middleware/authFirebase");
+const { badRequest } = require("../utils/httpErrors");
+
 function getTodayYMD() {
   const d = new Date();
    const yyyy = d.getFullYear();
@@ -24,11 +27,13 @@ function computeAllowedPerDay(friendsCount) {
   return Math.min(friendsCount, 10);
 }
 
-router.post("/posts", async (req, res) => {
+// Auth-protected: create a post. Identity is derived from the verified
+// Firebase token (req.user.uid), never from the request body.
+router.post("/posts", verifyFirebaseIdToken, async (req, res) => {
   try {
-    const { userId, name, photo, caption, mediaUrl, mediaType } = req.body;
+    const userId = req.user.uid;
+    const { name, photo, caption, mediaUrl, mediaType } = req.body;
 
-    if (!userId) return res.status(400).json({ error: "userId required" });
     if (!mediaUrl || !mediaType)
       return res.status(400).json({ error: "mediaUrl and mediaType required" });
 
@@ -77,12 +82,12 @@ router.post("/posts", async (req, res) => {
   }
 });
 
+// Public (unauthenticated) feed browsing.
 router.get("/posts", async (req, res) => {
   try {
-    
+
     const limit = Math.min(parseInt(req.query.limit || "20", 10), 50);
     const cursor = req.query.cursor;
-    const userId = req.query.userId;
 
     const query = {};
     if (cursor) {
@@ -142,14 +147,16 @@ router.get("/posts", async (req, res) => {
 });
 
 
-router.post("/posts/:postId/comments", async (req, res) => {
+// Auth-protected: add a comment. Identity from the token.
+router.post("/posts/:postId/comments", verifyFirebaseIdToken, async (req, res) => {
   try {
     const { postId } = req.params;
-    const { userId, name, photo, text } = req.body;
+    const userId = req.user.uid;
+    const { name, photo, text } = req.body;
 
     if (!postId) return res.status(400).json({ error: "postId required" });
-    if (!userId || !text)
-      return res.status(400).json({ error: "userId and text required" });
+    if (!text)
+      return res.status(400).json({ error: "text required" });
 
     const comment = await PostComment.create({
       postId,
@@ -164,6 +171,7 @@ router.post("/posts/:postId/comments", async (req, res) => {
   }
 });
 
+// Public (unauthenticated) comment browsing.
 router.get("/posts/:postId/comments", async (req, res) => {
   try {
     const { postId } = req.params;
@@ -179,13 +187,13 @@ router.get("/posts/:postId/comments", async (req, res) => {
 });
 
 
-router.post("/posts/:postId/like", async (req, res) => {
+// Auth-protected: toggle like. Identity from the token.
+router.post("/posts/:postId/like", verifyFirebaseIdToken, async (req, res) => {
   try {
     const { postId } = req.params;
-    const { userId } = req.body;
+    const userId = req.user.uid;
 
     if (!postId) return res.status(400).json({ error: "postId required" });
-    if (!userId) return res.status(400).json({ error: "userId required" });
 
     const existing = await PostLike.findOne({ postId, userId });
 
@@ -202,10 +210,10 @@ router.post("/posts/:postId/like", async (req, res) => {
   }
 });
 
+// Public stats. `likedByMe` is only resolved when a valid token is present.
 router.get("/posts/:postId/stats", async (req, res) => {
   try {
     const { postId } = req.params;
-    const { userId } = req.query;
 
     const [likesCount, commentsCount] = await Promise.all([
       PostLike.countDocuments({ postId }),
@@ -213,8 +221,28 @@ router.get("/posts/:postId/stats", async (req, res) => {
     ]);
 
     let likedByMe = false;
-    if (userId) {
-      likedByMe = (await PostLike.findOne({ postId, userId })) ? true : false;
+    const header = req.headers.authorization;
+    const hasBearer = !!header && header.startsWith("Bearer ");
+    if (hasBearer) {
+      try {
+        const token = header.slice("Bearer ".length).trim();
+        const { verifyFirebaseIdToken } = require("../middleware/authFirebase");
+        // Reuse the middleware in "optional auth" mode by wrapping it.
+        // We build a fake handler that only sets req.user on success.
+        const next = () => {};
+        // Simpler: decode token directly via admin.
+        const { getAdminOrThrow } = require("../config/firebaseAdmin");
+        const admin = getAdminOrThrow();
+        const decoded = await admin.auth().verifyIdToken(token);
+        if (decoded && decoded.uid) {
+          likedByMe = (await PostLike.findOne({ postId, userId: decoded.uid }))
+            ? true
+            : false;
+        }
+      } catch (e) {
+        // Invalid/expired token -> treat as unauthenticated.
+        likedByMe = false;
+      }
     }
 
     res.json({ likesCount, commentsCount, likedByMe });
@@ -224,11 +252,10 @@ router.get("/posts/:postId/stats", async (req, res) => {
   }
 });
 
-// Minimal friends count endpoint for posting limits UX + backend rule enforcement
-router.get("/friends/count", async (req, res) => {
+// Auth-protected friends count for posting limits UX + backend rule enforcement.
+router.get("/friends/count", verifyFirebaseIdToken, async (req, res) => {
   try {
-    const { userId } = req.query;
-    if (!userId) return res.status(400).json({ error: "userId required" });
+    const userId = req.user.uid;
 
     const friendsCount = await Friendship.countDocuments({
       userId,
@@ -244,12 +271,13 @@ router.get("/friends/count", async (req, res) => {
   }
 });
 
-// Testing/seed-friendly endpoint: create an accepted friendship
-router.post("/friends/seed", async (req, res) => {
+// Auth-protected testing/seed endpoint: create an accepted friendship.
+router.post("/friends/seed", verifyFirebaseIdToken, async (req, res) => {
   try {
-    const { userId, friendId } = req.body;
-    if (!userId || !friendId)
-      return res.status(400).json({ error: "userId and friendId required" });
+    const userId = req.user.uid;
+    const { friendId } = req.body;
+    if (!friendId)
+      return res.status(400).json({ error: "friendId required" });
 
     const doc = await Friendship.create({
       userId,
@@ -271,4 +299,3 @@ router.post("/friends/seed", async (req, res) => {
 });
 
 module.exports = router;
-

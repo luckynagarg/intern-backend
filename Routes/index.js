@@ -100,4 +100,8 @@ router.use('/admin/reset-password', adminPasswordReset);
 const emailVerification = require('./emailVerification');
 router.use('/email-verification', emailVerification);
 
+// Language OTP (French language switch verification)
+const languageOtp = require('./languageOtp');
+router.use('/language', languageOtp);
+
 module.exports = router;
