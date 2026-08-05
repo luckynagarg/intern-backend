@@ -135,7 +135,10 @@ router.get('/', verifyFirebaseIdToken, async (req, res) => {
   }
 
   try {
-    await ensureSeeded(userId);
+    // Only auto-seed fake notifications in development environment
+    if (process.env.NODE_ENV !== 'production') {
+      await ensureSeeded(userId);
+    }
 
     const limit = Math.min(parseInt(req.query.limit || '20', 10), 50);
     const unreadOnly = String(req.query.unreadOnly || 'false') === 'true';

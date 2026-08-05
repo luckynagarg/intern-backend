@@ -7,6 +7,7 @@
  * - Mount feature routes under /api
  * - Install centralized error handler
  * - Connect to MongoDB
+ * - Validate SMTP configuration and verify email transport on startup
  */
 const express = require("express");
 const cors = require("cors");
@@ -14,8 +15,18 @@ const bodyParser = require("body-parser");
 const { connect } = require("./db");
 const router = require("./Routes/index");
 const { errorHandler } = require("./middleware/errorHandler");
+const { validateResendEnvVars } = require("./services/emailService");
 
 const app = express();
+
+// Security headers via helmet (production-grade defaults)
+const helmet = require("helmet");
+app.use(helmet());
+
+// Render / Express proxy deployments require trust proxy for correct client IP handling.
+// This prevents issues with rate-limit / forwarded-for parsing.
+app.set('trust proxy', 1);
+
 
 const port = process.env.PORT || 5000;
 
@@ -111,7 +122,6 @@ app.post('/api/subscriptions/webhook', rawBodyMiddleware);
 // Body parsing
 app.use(bodyParser.json({ limit: "50mb" }));
 app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
-app.use(express.json());
 
 
 const buildRateLimiter = require("./middleware/rateLimit");
@@ -155,6 +165,36 @@ app.use(errorHandler);
   const result = await connect();
   app.locals.mongoAvailable = !!result?.mongoAvailable;
 
+  if (!result?.mongoAvailable) {
+    console.warn(
+      '[startup] MongoDB is NOT available. Protected routes will return empty data or 500. Reason:',
+      result?.reason || 'unknown'
+    );
+  }
+
+  // Validate Firebase Admin environment on startup.
+  // If Firebase Admin can't initialize, every protected route will fail with 503.
+  try {
+    const { getAdminOrThrow } = require('./config/firebaseAdmin');
+    getAdminOrThrow();
+    console.log('[startup] Firebase Admin: initialized OK');
+  } catch (err) {
+    console.warn('[startup] Firebase Admin NOT initialized:', err.message);
+    console.warn('[startup] Protected routes (/api/notifications, /api/resume/my-resumes, /api/login/history, etc.) will return 503 until Firebase Admin env vars are set.');
+  }
+
+  // Validate Resend environment variables on startup.
+  // This ensures email system is operational before accepting requests.
+  try {
+    validateResendEnvVars();
+    console.log('[startup] Resend environment variables: OK');
+  } catch (err) {
+    console.warn('[startup] Resend configuration issue:', err.message);
+    console.warn('[startup] Email sending will fail until Resend is configured correctly.');
+    // Do NOT block server start. Resend misconfiguration is non-fatal for the API,
+    // but email-dependent features will log errors on use.
+  }
+
   console.log(`Server running on port ${port}`);
   console.log(`Environment: ${environment}`);
   console.log(`Allowed CORS origins: ${JSON.stringify(allowedOrigins)}`);
@@ -166,8 +206,3 @@ app.use(errorHandler);
     console.log(`Listening on ${port}`);
   });
 })();
-
-
-
-
-

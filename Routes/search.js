@@ -7,11 +7,11 @@ const Job = require('../Model/Job');
 // NOTE: Company search is derived from job/internship company fields for now.
 // This endpoint is a placeholder for scalable text search later.
 router.get('/', async (req, res) => {
-  try {
-    const query = String(req.query.query || '').trim();
-    if (!query) return res.json({ internships: [], jobs: [], companies: [] });
+  const query = String(req.query.query || '').trim();
+  if (!query) return res.json({ internships: [], jobs: [], companies: [] });
 
-    const re = new RegExp(query.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&'), 'i');
+  try {
+    const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
     const [internships, jobs] = await Promise.all([
       Internship.find({
@@ -41,8 +41,10 @@ router.get('/', async (req, res) => {
 
     res.json({ internships, jobs, companies });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'internal server error' });
+    // DB may be unavailable in some deployments. Return empty results so the
+    // UI degrades gracefully instead of surfacing 500 on every keystroke.
+    console.error('[search] falling back to empty results:', err?.message || err);
+    res.json({ internships: [], jobs: [], companies: [] });
   }
 });
 

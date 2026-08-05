@@ -26,6 +26,10 @@ function internalServerError(message, details) {
   return new HttpError(500, message, details);
 }
 
+function serviceUnavailable(message, details) {
+  return new HttpError(503, message, details);
+}
+
 module.exports = {
   HttpError,
   badRequest,
@@ -33,5 +37,6 @@ module.exports = {
   unauthorized,
   notFound,
   internalServerError,
+  serviceUnavailable,
 };
 

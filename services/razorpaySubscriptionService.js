@@ -6,7 +6,8 @@ const Invoice = require('../Model/Invoice');
 const plans = require('../config/subscriptionPlans');
 const { isWithinPaymentWindowIST } = require('../utils/ist');
 const { generateInvoicePdf } = require('./invoicePdfService');
-const { buildInvoiceEmailHtml, sendInvoiceEmail } = require('./emailService');
+const { buildInvoiceEmailHtml } = require('./emailTemplates');
+const { sendInvoiceEmail } = require('./emailService');
 
 function normalizePlanKey(planKey) {
   return String(planKey || '').toLowerCase();

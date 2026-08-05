@@ -96,23 +96,38 @@ router.get("/posts", async (req, res) => {
 
     const postIds = posts.map((p) => p._id.toString());
 
-    const [likesAgg, commentsAgg] = await Promise.all([
-      PostLike.aggregate([
-        { $match: { postId: { $in: postIds } } },
-        { $group: { _id: "$postId", count: { $sum: 1 } } },
-      ]),
-      PostComment.aggregate([
-        { $match: { postId: { $in: postIds } } },
-        { $group: { _id: "$postId", count: { $sum: 1 } } },
-      ]),
-    ]);
+    let likesMap = {};
+    let commentsMap = {};
 
-    const likesMap = Object.fromEntries(likesAgg.map((x) => [x._id, x.count]));
-    const commentsMap = Object.fromEntries(commentsAgg.map((x) => [x._id, x.count]));
+    if (postIds.length) {
+      const [likesAgg, commentsAgg] = await Promise.all([
+        PostLike.aggregate([
+          { $match: { postId: { $in: postIds } } },
+          { $group: { _id: "$postId", count: { $sum: 1 } } },
+        ]),
+        PostComment.aggregate([
+          { $match: { postId: { $in: postIds } } },
+          { $group: { _id: "$postId", count: { $sum: 1 } } },
+        ]),
+      ]);
+
+      likesMap = Object.fromEntries(likesAgg.map((x) => [x._id, x.count]));
+      commentsMap = Object.fromEntries(commentsAgg.map((x) => [x._id, x.count]));
+    }
+
+    // Normalize media to a stable shape for the frontend.
+    // Schema stores `media` as an array; the public page reads `media.mediaType`
+    // and `media.url` directly, so flatten to the first media item (or null).
+    const normalizeMedia = (media) => {
+      if (!media) return null;
+      if (Array.isArray(media)) return media[0] || null;
+      return media;
+    };
 
     res.json({
       posts: posts.map((p) => ({
         ...p,
+        media: normalizeMedia(p.media),
         likesCount: likesMap[p._id.toString()] || 0,
         commentsCount: commentsMap[p._id.toString()] || 0,
       })),

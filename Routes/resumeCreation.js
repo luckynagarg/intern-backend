@@ -155,7 +155,10 @@ router.post('/purchase/razorpay/verify', verifyFirebaseIdToken, asyncHandler(asy
 
 router.get('/my-resumes', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const Resume = require('../Model/Resume');
-  const resumes = await Resume.find({ userId: req.user.uid })
+  const userId = req.user?.uid;
+  if (!userId) return res.json({ success: true, data: [] });
+
+  const resumes = await Resume.find({ userId })
     .sort({ createdAt: -1 })
     .limit(20)
     .lean();

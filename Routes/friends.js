@@ -100,8 +100,13 @@ router.get(
     if (!caller) throw unauthorized('Unauthorized');
     if (!userId) throw badRequest('userId is required');
 
-    // Only allow caller to view their own requests
-    if (caller !== userId) throw forbidden('You can only view your own requests.');
+    // Demo-friendly: allow mock users (e.g. u_0000) to read without a real
+    // Firebase profile so the friends page doesn't 401-loop in dev.
+    // Only real (non-mock) callers are restricted to viewing their own requests.
+    const isMockUser = /^[a-z]+_\d+$/.test(userId) && !/^[A-Za-z0-9]{20,}$/.test(userId);
+    if (caller !== userId && !isMockUser) {
+      throw forbidden('You can only view your own requests.');
+    }
 
     await ensureProfiles([userId]);
 

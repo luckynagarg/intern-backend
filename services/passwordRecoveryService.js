@@ -4,6 +4,8 @@ const crypto = require("crypto");
 const PasswordRecovery = require("../Model/PasswordRecovery");
 const { badRequest, forbidden, notFound, internalServerError } = require("../utils/httpErrors");
 
+const { sendTemplatedEmail, buildOtpEmailHtml } = require('./emailTemplates');
+
 /**
  * OTP configuration.
  */
@@ -146,7 +148,7 @@ async function issueOtp({ userId, method, authProvider }) {
     // If a previous flow already verified OTP but reset not completed, we allow issuance
     // only if the OTP was consumed/expired. Otherwise, require reset flow.
     if (!existing.otpConsumed) {
-      // Let clients proceed to verify/reset; don’t allow generating fresh OTP automatically.
+      // Let clients proceed to verify/reset; don't allow generating fresh OTP automatically.
     }
   }
 
@@ -265,7 +267,7 @@ async function resendOtp({ userId, method, authProvider }) {
   }
 
   // Daily request restriction: resends are part of the same reset request window.
-  // We don’t block resend by daily rule; cooldown handles spam.
+  // We don't block resend by daily rule; cooldown handles spam.
   const { otp, otpExpiresAt } = await issueOtp({ userId, method, authProvider });
   return { otp, otpExpiresAt };
 }
@@ -296,10 +298,8 @@ module.exports = {
   verifyOtp,
   resendOtp,
   markPasswordResetCompleted,
-  // constants for tests/docs
   OTP_TTL_MS,
   OTP_RESEND_COOLDOWN_MS,
   MAX_OTP_VERIFY_ATTEMPTS,
   PASSWORD_RESET_DAILY_LIMIT_MS,
 };
-

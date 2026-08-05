@@ -28,7 +28,7 @@ const { requireAdmin } = require("../middleware/requireAdmin");
 // Admin endpoints
 // /admin/adminlogin remains unprotected (login gate). All other admin routes should require admin.
 router.use("/admin", (req, res, next) => {
-  if (req.path === "/adminlogin") return admin(req, res, next);
+  if (req.path === "/adminlogin") return admin.handle(req, res, next);
   return verifyFirebaseIdToken(req, res, () => requireAdmin(req, res, next));
 });
 
@@ -88,12 +88,16 @@ router.use('/resume', resumeCreation);
 // Search (internships/jobs/companies)
 router.use('/search', search);
 
+// Contact/Query form (forwards to admin email luckynagar1505@gmail.com)
+const contact = require('./contact');
+router.use('/contact', contact);
+
+// Admin password reset (OTP-based, reuses existing email infrastructure)
+const adminPasswordReset = require('./adminPasswordReset');
+router.use('/admin/reset-password', adminPasswordReset);
+
+// Email verification (Firebase built-in verification link)
+const emailVerification = require('./emailVerification');
+router.use('/email-verification', emailVerification);
+
 module.exports = router;
-
-
-
-
-
-
-
-

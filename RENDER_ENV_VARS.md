@@ -2,16 +2,13 @@
 
 ## Required
 
-- `FIREBASE_SERVICE_ACCOUNT` (string)
-  - Must be the **raw JSON** for the Firebase Admin service account.
-  - Example format (single-line recommended):
-    ```
-    {"type":"service_account","project_id":"...","private_key_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n","client_email":"...","client_id":"...","auth_uri":"...","token_uri":"...","auth_provider_x509_cert_url":"...","client_x509_cert_url":"..."}
-    ```
+- `FIREBASE_SERVICE_ACCOUNT`
+  - Raw JSON string for the Firebase Admin service account.
 
-## Removed / no longer used
+OR
 
-This backend no longer uses:
-- `FIREBASE_SERVICE_ACCOUNT_JSON`
-- `FIREBASE_SERVICE_ACCOUNT_PATH`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
+  - The private key may be provided with escaped newlines; the backend will restore `\\n` -> `\n`.
 

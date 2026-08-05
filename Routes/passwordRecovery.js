@@ -231,10 +231,20 @@ router.post("/resend-otp", asyncHandler(async (req, res) => {
     : "password";
 
   // resendOtp enforces cooldown
-  await resendOtp({ userId, method, authProvider });
+  const { otp } = await resendOtp({ userId, method, authProvider });
 
-  // In this codebase, OTP sending isn’t wired.
-  // Keep response generic.
+  // Send OTP email (this was missing - OTP was generated but never delivered to the user)
+  if (method === "email") {
+    if (!user?.email) {
+      throw internalServerError("User email not available for OTP delivery.");
+    }
+    await sendOtpEmail({
+      toEmail: user.email,
+      toName: user.displayName,
+      otp,
+    });
+  }
+
   return res.status(200).json({
     success: true,
     message: "If an account exists, we will send a new OTP.",
@@ -305,4 +315,3 @@ router.post("/reset-password", asyncHandler(async (req, res) => {
 }));
 
 module.exports = router;
-

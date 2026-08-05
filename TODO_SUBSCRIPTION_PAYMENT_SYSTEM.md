@@ -1,6 +1,6 @@
 # Subscription & Payment Management System - TODO
 
-- [ ] Install dependencies (razorpay, firebase-admin, pdfkit, nodemailer, express-rate-limit, helmet, zod)
+- [ ] Install dependencies (razorpay, firebase-admin, pdfkit, resend, express-rate-limit, helmet, zod)
 - [ ] Add Firebase Admin initialization
 - [ ] Add Firebase ID token auth middleware
 - [ ] Add subscription/payment/invoice Mongoose models with indexes

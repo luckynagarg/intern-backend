@@ -4,25 +4,27 @@ const router = express.Router();
 const Job = require("../Model/Job");
 
 router.post("/", async (req, res) => {
-  const jobdata = new Job({
-    title: req.body.title,
-    company: req.body.company,
-    location: req.body.location,
-    Experience: req.body.Experience,
-    category: req.body.category,
-    aboutCompany: req.body.aboutCompany,
-    aboutJob: req.body.aboutJob,
-    whoCanApply: req.body.whoCanApply,
-    perks: req.body.perks,
-    AdditionalInfo: req.body.AdditionalInfo,
-    CTC: req.body.CTC,
-    StartDate: req.body.StartDate,
-  });
-  await jobdata.save().then((data)=>{
-    res.send(data)
-  }).catch((error)=>{
-    console.log(error)
-  })
+  try {
+    const jobdata = new Job({
+      title: req.body.title,
+      company: req.body.company,
+      location: req.body.location,
+      Experience: req.body.Experience,
+      category: req.body.category,
+      aboutCompany: req.body.aboutCompany,
+      aboutJob: req.body.aboutJob,
+      whoCanApply: req.body.whoCanApply,
+      perks: req.body.perks,
+      AdditionalInfo: req.body.AdditionalInfo,
+      CTC: req.body.CTC,
+      StartDate: req.body.StartDate,
+    });
+    const data = await jobdata.save();
+    return res.status(201).send(data);
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ error: "internal server error" });
+  }
 });
 
 const getMockJobs = () => [
