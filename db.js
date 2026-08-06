@@ -8,6 +8,16 @@ module.exports.connect = async () => {
     return { mongoAvailable: false, reason: "missing DATABASE_URL" };
   }
 
+  // Validate the connection string scheme up-front so the failure reason is
+  // actionable instead of Mongoose's generic "Invalid scheme" message.
+  if (!/^mongodb(\+srv)?:\/\//i.test(uri)) {
+    const reason =
+      'DATABASE_URL is not a valid MongoDB connection string. It must start with "mongodb://" or "mongodb+srv://". ' +
+      "Check the DATABASE_URL value set in your environment (Render dashboard > Environment).";
+    console.warn("⚠️ Database connection failed. Mongo will be treated as unavailable:", reason);
+    return { mongoAvailable: false, reason };
+  }
+
   try {
     // Fail fast when the cluster is unreachable instead of buffering queries for 10s.
     // With bufferCommands:false, any query issued before the connection is ready will

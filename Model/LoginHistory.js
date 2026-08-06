@@ -51,12 +51,12 @@ const LoginHistorySchema = new mongoose.Schema(
     // Session duration in seconds (if logout recorded)
     sessionDurationSeconds: { type: Number, default: null },
 
-    // --- Required fields (for production-ready spec) ---
+// --- Required fields (for production-ready spec) ---
     // NOTE: we keep these optional to avoid breaking existing writes.
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     firebaseUid: { type: String, index: true },
     name: { type: String, default: '' },
-    email: { type: String, default: '', index: true },
+    email: { type: String, default: '' },
 
     // loginMethod in spec is generic; keep separate from legacy loginMethod.
     // (Frontends will read whichever field they need.)

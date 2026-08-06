@@ -17,6 +17,13 @@ OR
 - `DATABASE_URL`
   - MongoDB connection string. Without it, `db.js` logs "Mongo will be treated as unavailable"
     and protected routes that query the DB will return 500.
+  - **Must start with `mongodb://` or `mongodb+srv://`.** If Render logs
+    `Invalid scheme, expected connection string to start with "mongodb://" or "mongodb+srv://"`,
+    the `DATABASE_URL` value is not a valid MongoDB URI. Fix it in
+    Render dashboard > your service > Environment > `DATABASE_URL`.
+  - Example (MongoDB Atlas): `mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority`
+  - The backend now validates the scheme at startup and prints an actionable message
+    (`DATABASE_URL is not a valid MongoDB connection string...`) before exiting in production.
 
 ## Troubleshooting 500s on protected endpoints
 

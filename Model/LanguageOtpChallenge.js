@@ -13,7 +13,7 @@ const mongoose = require('mongoose');
  */
 const LanguageOtpChallengeSchema = new mongoose.Schema(
     {
-    userId: { type: String, required: true, index: true },
+    userId: { type: String, required: true },
     email: { type: String, required: true, index: true },
 
     otpHash: { type: String, required: true },

@@ -10,7 +10,6 @@ const UserProfileSchema = new mongoose.Schema(
       type: String,
       required: true,
       unique: true,
-      index: true,
     },
 
     username: {
@@ -20,7 +19,6 @@ const UserProfileSchema = new mongoose.Schema(
       sparse: true,
       trim: true,
       lowercase: true,
-      index: true,
     },
 
     name: { type: String, default: null, trim: true },
@@ -74,8 +72,9 @@ const UserProfileSchema = new mongoose.Schema(
   }
 );
 
-UserProfileSchema.index({ firebaseUid: 1 }, { unique: true });
-UserProfileSchema.index({ username: 1 }, { unique: true, sparse: true });
+// firebaseUid and username declare `unique: true` in the field definition,
+// which already creates the unique indexes. Declaring schema.index() here as
+// well caused duplicate-index warnings from Mongoose, so they were removed.
 
 UserProfileSchema.pre('save', function (next) {
   this.updatedAt = new Date();
