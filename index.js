@@ -11,15 +11,52 @@
  */
 // Load environment variables FIRST so every module (db, firebaseAdmin, services)
 // reading process.env at require-time sees the correct values.
-require("dotenv").config();
+const dotenvResult = require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
-const { connect } = require("./db");
+const {
+  connect,
+  resolveMongoUriFromEnv,
+  normalizeMongoUri,
+  safeMongoHost,
+} = require("./db");
 const router = require("./Routes/index");
 const { errorHandler } = require("./middleware/errorHandler");
 const { validateResendEnvVars } = require("./services/emailService");
+
+// ============================================================
+// Startup diagnostics — NEVER log passwords or secret values.
+// ============================================================
+function logStartupDiagnostics() {
+  const dotenvLoaded = !!(dotenvResult && dotenvResult.parsed);
+  console.log(
+    "[startup] dotenv loaded:",
+    dotenvLoaded ? "yes (.env parsed)" : "no (.env absent; using process env)"
+  );
+
+  console.log("[startup] DATABASE_URL exists:", !!process.env.DATABASE_URL);
+
+  const rawUri = resolveMongoUriFromEnv();
+  const uri = normalizeMongoUri(rawUri);
+
+  console.log("[startup] Mongo connection string resolved:", !!uri);
+  if (uri) {
+    console.log(
+      "[startup] starts with mongodb:// :",
+      /^mongodb:\/\//i.test(uri)
+    );
+    console.log(
+      "[startup] starts with mongodb+srv:// :",
+      /^mongodb\+srv:\/\//i.test(uri)
+    );
+    console.log("[startup] Mongo host:", safeMongoHost(uri));
+  }
+}
+
+// Print environment diagnostics immediately at startup.
+logStartupDiagnostics();
 
 const app = express();
 

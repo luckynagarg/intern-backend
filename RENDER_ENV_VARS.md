@@ -14,16 +14,30 @@ OR
 
 ## Also required for protected endpoints
 
-- `DATABASE_URL`
-  - MongoDB connection string. Without it, `db.js` logs "Mongo will be treated as unavailable"
-    and protected routes that query the DB will return 500.
-  - **Must start with `mongodb://` or `mongodb+srv://`.** If Render logs
-    `Invalid scheme, expected connection string to start with "mongodb://" or "mongodb+srv://"`,
-    the `DATABASE_URL` value is not a valid MongoDB URI. Fix it in
-    Render dashboard > your service > Environment > `DATABASE_URL`.
-  - Example (MongoDB Atlas): `mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority`
-  - The backend now validates the scheme at startup and prints an actionable message
-    (`DATABASE_URL is not a valid MongoDB connection string...`) before exiting in production.
+- MongoDB connection string — resolved by `db.js` from (highest priority first):
+  `MONGODB_URI` → `MONGO_URL` → `MONGO_URI` → `DATABASE_URL`.
+  At least one must be set; otherwise `db.js` logs
+  "Mongo will be treated as unavailable" and protected routes that query the DB return 500.
+
+- **Recommended: set `MONGODB_URI`** to your MongoDB Atlas URI:
+  `mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority`
+
+- **Critical Render gotcha — `DATABASE_URL` can be auto-injected:**
+  When a Render PostgreSQL database is linked to the service, Render automatically
+  overrides `DATABASE_URL` with a `postgres://...` URI. If startup logs show
+  "DATABASE_URL is not a valid MongoDB connection string", check the host printed by the
+  new diagnostics (`[startup] Mongo host:`). If it is a Postgres host, a linked Render
+  Postgres is overriding `DATABASE_URL`. Fix by either:
+  1. Unlinking/removing the Render Postgres database, or
+  2. Setting `MONGODB_URI` (which takes precedence over `DATABASE_URL`).
+
+- **Value hygiene:** the URI must start with `mongodb://` or `mongodb+srv://`, must NOT be
+  wrapped in quotes, and must NOT contain leading/trailing spaces. `db.js` now trims the
+  value and strips a single pair of surrounding quotes automatically.
+
+- The backend prints startup diagnostics (never secrets): whether dotenv loaded, whether a
+  connection string exists, whether it starts with `mongodb://`/`mongodb+srv://`, and the
+  database hostname (credentials stripped).
 
 ## Troubleshooting 500s on protected endpoints
 
