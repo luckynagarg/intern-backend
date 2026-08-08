@@ -250,6 +250,81 @@ router.patch('/:id/visibility', verifyFirebaseIdToken, asyncHandler(async (req, 
   res.json({ success: true, data: resume });
 }));
 
+// ---------------------------------------------------------------------------
+// Payment-first resume creation flow
+// ---------------------------------------------------------------------------
+// The user pays BEFORE seeing the resume form. These endpoints create + verify
+// a Razorpay order, grant a paid "resume entitlement", then the frontend saves
+// the form data and triggers PDF generation.
+
+const {
+  createResumePaymentOrder,
+  verifyResumePaymentAndCreateEntitlement,
+  getResumeCreateAccess,
+  saveResumeData,
+  generateResumeFromEntitlement,
+} = require('../services/resumeService');
+
+// POST /api/resume/payment/create-order — create a Razorpay order for a resume
+router.post('/payment/create-order', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const userId = req.user.uid;
+  const userEmail = req.user.email;
+
+  const data = await createResumePaymentOrder({ userId, userEmail });
+  return res.json({ success: true, data });
+}));
+
+// POST /api/resume/payment/verify — verify signature & create paid entitlement
+router.post('/payment/verify', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body || {};
+  if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+    throw badRequest('razorpayOrderId, razorpayPaymentId and razorpaySignature are required.');
+  }
+
+  const userId = req.user.uid;
+  const userEmail = req.user.email;
+
+  const result = await verifyResumePaymentAndCreateEntitlement({
+    userId,
+    userEmail,
+    razorpayOrderId,
+    razorpayPaymentId,
+    razorpaySignature,
+  });
+
+  return res.json({ success: true, data: result });
+}));
+
+// GET /api/resume/create-access — check auth + paid entitlement (protects /resume/create)
+router.get('/create-access', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const userId = req.user?.uid;
+  const access = await getResumeCreateAccess(userId);
+  return res.json({ success: true, data: access });
+}));
+
+// PATCH /api/resume/:id/resume-data — save form data into the paid entitlement
+router.patch('/:id/resume-data', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const userId = req.user?.uid;
+  const { id } = req.params;
+  const { resumeData, photoUrl } = req.body || {};
+
+  if (!resumeData || typeof resumeData !== 'object') {
+    throw badRequest('resumeData is required.');
+  }
+
+  const resume = await saveResumeData({ userId, resumeId: id, resumeData, photoUrl });
+  return res.json({ success: true, data: resume });
+}));
+
+// POST /api/resume/:id/generate — generate PDF from saved form data
+router.post('/:id/generate', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const userId = req.user?.uid;
+  const { id } = req.params;
+
+  const result = await generateResumeFromEntitlement({ userId, resumeId: id });
+  return res.json({ success: true, data: result });
+}));
+
 router.get('/resumes/:resumeId/download', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const fs = require('fs');
   const path = require('path');

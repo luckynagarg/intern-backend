@@ -187,9 +187,241 @@ async function markResumePaymentAndGenerate({ resumeId, userId, razorpayPayload,
   return { resumePdfPath: resume.resumePdfPath, resumeId: resume._id };
 }
 
+/**
+ * Payment-first resume creation helpers.
+ *
+ * The user pays for a "Resume Creation entitlement" BEFORE seeing the resume
+ * form. After a successful (server-verified) payment we create a Resume doc in
+ * the `paid_not_generated` state with empty resumeData. The user then fills the
+ * form, which is saved, and finally the PDF is generated (`generated`).
+ */
+
+// Fee for one premium resume creation (in INR).
+const RESUME_PRICE_INR = Number(process.env.RESUME_PRICE_INR || 50);
+
+function resumePriceInr() {
+  return Number.isFinite(RESUME_PRICE_INR) && RESUME_PRICE_INR > 0 ? RESUME_PRICE_INR : 50;
+}
+
+/**
+ * Find the user's reusable paid-but-unsaved resume entitlement.
+ * A paid entitlement is a Resume doc owned by `userId` that has been paid for
+ * (status 'paid_not_generated' or 'otp_verified') but has NOT been generated yet
+ * and has not completed its form. We treat `paid_not_generated` as the
+ * "entitlement created, form not yet completed" marker.
+ */
+async function findPaidResumeEntitlement(userId) {
+  return Resume.findOne({
+    userId,
+    status: { $in: ['paid_not_generated', 'otp_verified'] },
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+}
+
+/**
+ * Create a Razorpay order for a single resume creation.
+ * Reuses the shared Razorpay instance via razorpayService.
+ */
+async function createResumePaymentOrder({ userId, userEmail }) {
+  const PaymentTransaction = require('../Model/PaymentTransaction');
+  const { getRazorpayInstance } = require('./razorpayService');
+
+  const priceInr = resumePriceInr();
+  const currency = process.env.RAZORPAY_CURRENCY || 'INR';
+
+  // Prevent duplicate active orders for the same user (avoid accidental double charge).
+  const duplicate = await PaymentTransaction.findOne({
+    userId,
+    status: 'created',
+    planKey: 'resume',
+  });
+  if (duplicate) {
+    return {
+      orderId: duplicate.razorpayOrderId,
+      amount: duplicate.amount,
+      currency: duplicate.currency,
+      transactionId: duplicate._id,
+    };
+  }
+
+  const razorpay = getRazorpayInstance();
+  const order = await razorpay.orders.create({
+    amount: priceInr * 100,
+    currency,
+    receipt: `resume_${userId}_${Date.now()}`,
+    payment_capture: 1,
+  });
+
+  const txn = await PaymentTransaction.create({
+    userId,
+    planKey: 'resume',
+    amount: priceInr,
+    currency,
+    razorpayOrderId: order.id,
+    razorpayPaymentId: null,
+    razorpaySignature: null,
+    status: 'created',
+    invoiceNumber: null,
+  });
+
+  return {
+    orderId: order.id,
+    amount: priceInr,
+    currency,
+    transactionId: txn._id,
+    keyId: process.env.RAZORPAY_KEY_ID || '',
+  };
+}
+
+/**
+ * Verify the Razorpay payment signature server-side and create (or reuse) a
+ * paid Resume entitlement. Idempotent: a user with an existing entitlement is
+ * not charged again.
+ */
+async function verifyResumePaymentAndCreateEntitlement({ userId, userEmail, razorpayOrderId, razorpayPaymentId, razorpaySignature }) {
+  const PaymentTransaction = require('../Model/PaymentTransaction');
+
+  // 1. Look up the transaction (must exist and belong to the user).
+  const txn = await PaymentTransaction.findOne({ userId, razorpayOrderId });
+  if (!txn) throw notFound('Payment order not found.');
+
+  // 2. Idempotency: already verified -> reuse existing entitlement.
+  if (txn.status === 'verified') {
+    const existing = await findPaidResumeEntitlement(userId);
+    if (existing) {
+      return { resumeId: existing._id, alreadyPaid: true, transactionId: txn._id };
+    }
+  }
+
+  // 3. Verify signature using the server secret.
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!secret) throw internalServerError('RAZORPAY_KEY_SECRET is not set.');
+
+  const body = `${razorpayOrderId}|${razorpayPaymentId}`;
+  const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
+  if (expected !== razorpaySignature) {
+    txn.status = 'failed';
+    txn.failureReason = 'Signature verification failed.';
+    txn.razorpayPaymentId = razorpayPaymentId;
+    txn.razorpaySignature = razorpaySignature;
+    await txn.save();
+    throw forbidden('Payment verification failed. Please try again.');
+  }
+
+  // 4. Mark the transaction verified.
+  txn.status = 'verified';
+  txn.razorpayPaymentId = razorpayPaymentId;
+  txn.razorpaySignature = razorpaySignature;
+  txn.verifiedAt = new Date();
+  await txn.save();
+
+  // 5. Create the paid Resume entitlement (empty resumeData for now).
+  const resume = await Resume.create({
+    userId,
+    resumeData: {
+      fullName: '',
+      qualifications: '',
+      experience: '',
+      personalInfo: {
+        email: userEmail || '',
+        phone: '',
+        location: '',
+        linkedin: '',
+        website: '',
+      },
+    },
+    photoUrl: null,
+    status: 'paid_not_generated',
+    payment: {
+      transactionId: txn._id,
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+      paidAt: new Date(),
+    },
+  });
+
+  return { resumeId: resume._id, alreadyPaid: false, transactionId: txn._id };
+}
+
+/**
+ * Get resume creation access for a user.
+ * Returns { allowed, resumeId } where resumeId is the reusable paid entitlement if present.
+ */
+async function getResumeCreateAccess(userId) {
+  if (!userId) return { allowed: false, resumeId: null };
+
+  const entitlement = await findPaidResumeEntitlement(userId);
+  return {
+    allowed: !!entitlement,
+    resumeId: entitlement ? entitlement._id : null,
+  };
+}
+
+/**
+ * Save the resume form data into the user's paid entitlement.
+ * Owner-only (route enforces ownership).
+ */
+async function saveResumeData({ userId, resumeId, resumeData, photoUrl }) {
+  const resume = await Resume.findOne({ _id: resumeId, userId });
+  if (!resume) throw notFound('Resume not found.');
+
+  resume.resumeData = resumeData || resume.resumeData;
+  if (photoUrl !== undefined) resume.photoUrl = photoUrl;
+  await resume.save();
+
+  return resume;
+}
+
+/**
+ * Generate the resume PDF from saved form data and mark it generated.
+ * Returns the stored artifact (the resume doc, lean).
+ */
+async function generateResumeFromEntitlement({ userId, resumeId }) {
+  const resume = await Resume.findOne({ _id: resumeId, userId });
+  if (!resume) throw notFound('Resume not found.');
+
+  if (resume.status === 'generated') {
+    return { alreadyGenerated: true, resume: resume.toObject() };
+  }
+
+  // Ensure a valid paid entitlement.
+  if (resume.status !== 'paid_not_generated' && resume.status !== 'otp_verified') {
+    throw forbidden('No valid paid resume entitlement for this resume.');
+  }
+
+  const { resumeData, photoUrl } = resume;
+  const fullName = resumeData?.fullName;
+  if (!fullName) throw badRequest('Please fill in your resume details before generating.');
+
+  const safeUserFolder = String(userId).slice(0, 10);
+  const baseDir = path.join(process.cwd(), 'uploads', 'resumes', safeUserFolder);
+  if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
+
+  const outBasePath = path.join(baseDir, `resume_${resumeId}`);
+  const pdfPath = await generateResumePdf({
+    resumeData,
+    photoUrl: resume.photoUrl,
+    userName: resumeData?.fullName,
+    outputPath: outBasePath,
+  });
+
+  resume.resumePdfPath = pdfPath;
+  resume.status = 'generated';
+  await resume.save();
+
+  return { alreadyGenerated: false, resume: resume.toObject() };
+}
+
 module.exports = {
   createResumePurchase,
   verifyResumeOtp,
   markResumePaymentAndGenerate,
+  createResumePaymentOrder,
+  verifyResumePaymentAndCreateEntitlement,
+  getResumeCreateAccess,
+  saveResumeData,
+  generateResumeFromEntitlement,
 };
 
