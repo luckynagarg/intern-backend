@@ -40,3 +40,5 @@ Thumbs.db
 *.tsbuildinfo
 # Firebase service account (never commit)
 services/internarea-1c6cd-firebase-adminsdk-fbsvc-7f5f76322e.json
+
+Model/internarea-1c6cd-firebase-adminsdk-fbsvc-b7918c9c7f.json
