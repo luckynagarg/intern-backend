@@ -9,6 +9,7 @@ const { isWithinPaymentWindowIST } = require('../utils/ist');
 
 const { generateInvoicePdf } = require('./invoicePdfService');
 const emailService = require('./emailService');
+const { buildInvoiceEmailHtml } = require('./emailTemplates');
 const { getActivePlanAndQuota } = require('./subscriptionService');
 
 const { getRazorpayInstance } = require('./razorpayService');
@@ -247,9 +248,9 @@ async function verifyAndActivate({ userId, planKey, razorpayOrderId, razorpayPay
 
   await PaymentTransaction.updateOne({ _id: txnAfter?._id }, { $set: { invoiceNumber } });
 
-  // Best-effort email.
+// Best-effort email.
   try {
-    const html = emailService.buildInvoiceEmailHtml({
+    const html = buildInvoiceEmailHtml({
       planName: plan.name,
       amountPaid: plan.priceINR,
       paymentId: razorpayPaymentId,

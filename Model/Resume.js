@@ -25,6 +25,14 @@ const ResumeSchema = new mongoose.Schema(
     // generated artifacts
     resumePdfPath: { type: String, default: null },
 
+    // visibility: 'private' (owner only) or 'public' (shareable)
+    visibility: {
+      type: String,
+      enum: ['private', 'public'],
+      default: 'private',
+      index: true,
+    },
+
     // lifecycle
     status: {
       type: String,
@@ -57,6 +65,6 @@ const ResumeSchema = new mongoose.Schema(
 );
 
 ResumeSchema.index({ userId: 1, createdAt: -1 });
+ResumeSchema.index({ visibility: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Resume', ResumeSchema);
-

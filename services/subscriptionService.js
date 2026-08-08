@@ -76,7 +76,7 @@ async function ensureSubscriptionDocForUser(userId) {
  * Returns active plan + quota usage for the current IST calendar month.
  *
  * Why IST here?
- * - Monthly quota is defined as “per month” but the business operates in IST.
+ * - Monthly quota is defined as "per month" but the business operates in IST.
  * - This ensures quota boundaries are computed consistently on the server.
  */
 async function getActivePlanAndQuota(userId) {
@@ -120,7 +120,6 @@ async function getActivePlanAndQuota(userId) {
 
   const limit = plan.monthlyLimit;
 
-
   // Unlimited plans are represented by Infinity.
   const remaining =
     limit === Number.POSITIVE_INFINITY
@@ -136,6 +135,11 @@ async function getActivePlanAndQuota(userId) {
     subscriptionStatus: sub.status,
     subscriptionStart: sub.startDate,
     subscriptionExpiry: sub.endDate,
+    // Extended quota fields
+    resumeLimit: plan.resumeLimit,
+    friendLimit: plan.friendLimit,
+    postLimit: plan.postLimit,
+    storageLimitMB: plan.storageLimitMB,
   };
 }
 
@@ -153,5 +157,3 @@ module.exports = {
   getActivePlanAndQuota,
   getQuotaOnly,
 };
-
-

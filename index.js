@@ -242,7 +242,32 @@ app.use(errorHandler);
     console.log('[startup] Firebase Admin: initialized OK');
   } catch (err) {
     console.warn('[startup] Firebase Admin NOT initialized:', err.message);
-    console.warn('[startup] Protected routes (/api/notifications, /api/resume/my-resumes, /api/login/history, etc.) will return 503 until Firebase Admin env vars are set.');
+    // Provide actionable guidance on exactly which env var(s) are missing.
+    const hasJson = !!process.env.FIREBASE_SERVICE_ACCOUNT;
+    const hasPath = !!process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+    const hasIndividual =
+      !!process.env.FIREBASE_PROJECT_ID &&
+      !!process.env.FIREBASE_CLIENT_EMAIL &&
+      !!process.env.FIREBASE_PRIVATE_KEY;
+
+    if (hasPath && !hasJson && !hasIndividual) {
+      const p = String(process.env.FIREBASE_SERVICE_ACCOUNT_PATH).trim();
+      const fs = require('fs');
+      const path = require('path');
+      const resolved = /^([a-zA-Z]:[\\/]|\/)/.test(p)
+        ? p
+        : path.join(__dirname, p);
+      console.warn(
+        `[startup]   -> FIREBASE_SERVICE_ACCOUNT_PATH is set but file ${
+          fs.existsSync(resolved) ? 'EXISTS' : 'DOES NOT EXIST'
+        }: ${resolved}`
+      );
+    } else if (!hasJson && !hasPath && !hasIndividual) {
+      console.warn(
+        '[startup]   -> Set FIREBASE_SERVICE_ACCOUNT (JSON), FIREBASE_SERVICE_ACCOUNT_PATH (file), or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY.'
+      );
+    }
+    console.warn('[startup] Protected routes (/api/notifications, /api/resume/my-resumes, /api/login/history, etc.) will return 503 until Firebase Admin is configured.');
   }
 
   // Validate Resend environment variables on startup.

@@ -5,7 +5,8 @@ const mongoose = require('mongoose');
 
 const Notification = require('../Model/Notification');
 const { verifyFirebaseIdToken } = require('../middleware/authFirebase');
-const { unauthorized, badRequest, notFound, internalServerError } = require('../utils/httpErrors');
+const { unauthorized, badRequest, internalServerError } = require('../utils/httpErrors');
+const { populateNotificationActors } = require('../services/notificationService');
 
 const { pick, randInt, fakeDateWithinLastMonths, uniqueId } = require('../seed/utils');
 
@@ -67,24 +68,19 @@ function generateRealisticNotificationsForUser(userId) {
   });
 }
 
-// Ensure seeded notifications exist per user.
+// Ensure seeded notifications exist per user (dev only).
 async function ensureSeeded(userId) {
   const existingCount = await Notification.countDocuments({ userId });
   if (existingCount > 0) return;
 
   const docs = generateRealisticNotificationsForUser(userId);
-
-  // Don’t persist _seedId
-  await Notification.insertMany(
-    docs.map(({ _seedId, ...rest }) => rest),
-    { ordered: false }
-  );
+  await Notification.insertMany(docs.map(({ _seedId, ...rest }) => rest), {
+    ordered: false,
+  });
 }
 
 function toApiNotification(n) {
-  // Backward/forward compatibility:
-  // - Prefer recommended format: {_id,title,body,type,read,createdAt}
-  // - If legacy: message -> body, id -> _id
+  // Backward/forward-compatible shape: {_id,title,body,type,read,createdAt,actor,link,action}
   const _id = String(n._id ?? n.id ?? '');
   const title = typeof n.title === 'string' ? n.title : '';
   const body =
@@ -105,29 +101,29 @@ function toApiNotification(n) {
     type,
     read,
     createdAt,
+    actor: n.actor ?? null,
+    fromUser: n.fromUser ?? null,
+    link: n.link ?? null,
+    action: n.action || null,
+    entityType: n.entityType || null,
+    entityId: n.entityId || null,
   };
 }
 
 function mapErrorToHttpError(err) {
-  // Mongoose validation/cast errors -> 400
   if (err instanceof mongoose.Error.CastError) {
     return badRequest('Invalid notification id.', { field: err.path, value: err.value });
   }
-
   if (err instanceof mongoose.Error.ValidationError) {
     return badRequest('Notification validation failed.', err.errors);
   }
-
-  // Mongoose duplicate key/etc -> 400-ish
   if (err && typeof err.code === 'number' && String(err.code).startsWith('1')) {
     return badRequest('Duplicate notification.', err);
   }
-
-  // Default
   return internalServerError(err?.message || 'Internal server error');
 }
 
-// GET: list notifications (scalable: support pagination later)
+// GET /api/notifications?page=1&limit=20&unreadOnly=true&type=social
 router.get('/', verifyFirebaseIdToken, async (req, res) => {
   const userId = req.user?.uid;
   if (!userId) {
@@ -135,30 +131,44 @@ router.get('/', verifyFirebaseIdToken, async (req, res) => {
   }
 
   try {
-    // Only auto-seed fake notifications in development environment
+    // Only auto-seed fake notifications in development environment.
     if (process.env.NODE_ENV !== 'production') {
       await ensureSeeded(userId);
     }
 
-    const limit = Math.min(parseInt(req.query.limit || '20', 10), 50);
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 50);
+    const skip = (page - 1) * limit;
     const unreadOnly = String(req.query.unreadOnly || 'false') === 'true';
+    const type = req.query.type ? String(req.query.type) : null;
 
     const query = { userId };
     if (unreadOnly) query.read = false;
+    if (type) query.type = type;
 
-    const notifications = await Notification.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
+    const [notifications, total] = await Promise.all([
+      Notification.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Notification.countDocuments(query),
+    ]);
+
+    const populated = await populateNotificationActors(notifications || []);
 
     return res.status(200).json({
-      notifications: (notifications || []).map(toApiNotification),
+      success: true,
+      notifications: (populated || []).map(toApiNotification),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(Math.ceil(total / limit), 1),
+      },
     });
   } catch (err) {
     console.error('Notifications Error:', err);
-
-    // Ensure we never crash the server.
-    // Central error handler exists; this route is converting errors into HttpError.
     const httpErr = mapErrorToHttpError(err);
     return res.status(httpErr.statusCode || 500).json({
       success: false,
@@ -170,19 +180,17 @@ router.get('/', verifyFirebaseIdToken, async (req, res) => {
   }
 });
 
-// GET: unread count
+// GET /api/notifications/unread-count
 router.get('/unread-count', verifyFirebaseIdToken, async (req, res) => {
   const userId = req.user?.uid;
   if (!userId) {
     throw unauthorized('Unauthorized');
   }
-
   try {
     const unreadCount = await Notification.countDocuments({ userId, read: false });
     return res.status(200).json({ unreadCount });
   } catch (err) {
     console.error('Notifications UnreadCount Error:', err);
-
     const httpErr = internalServerError(err?.message || 'Internal server error');
     return res.status(httpErr.statusCode || 500).json({
       success: false,
@@ -191,19 +199,59 @@ router.get('/unread-count', verifyFirebaseIdToken, async (req, res) => {
   }
 });
 
-// POST: mark notification read
+// POST /api/notifications/read-all
+router.post('/read-all', verifyFirebaseIdToken, async (req, res) => {
+  const userId = req.user?.uid;
+  if (!userId) {
+    throw unauthorized('Unauthorized');
+  }
+  try {
+    const result = await Notification.updateMany(
+      { userId, read: false },
+      { $set: { read: true } }
+    );
+    return res.status(200).json({ success: true, modifiedCount: result.modifiedCount || 0 });
+  } catch (err) {
+    console.error('Notifications ReadAll Error:', err);
+    const httpErr = internalServerError(err?.message || 'Internal server error');
+    return res.status(httpErr.statusCode || 500).json({
+      success: false,
+      error: { message: httpErr.message || 'Internal Server Error' },
+    });
+  }
+});
+
+// POST /api/notifications/mark-all-read
+router.post('/mark-all-read', verifyFirebaseIdToken, async (req, res) => {
+  const userId = req.user?.uid;
+  if (!userId) {
+    throw unauthorized('Unauthorized');
+  }
+  try {
+    const result = await Notification.updateMany(
+      { userId, read: false },
+      { $set: { read: true } }
+    );
+    return res.status(200).json({ success: true, modifiedCount: result.modifiedCount || 0 });
+  } catch (err) {
+    console.error('Notifications MarkAllRead Error:', err);
+    const httpErr = internalServerError(err?.message || 'Internal server error');
+    return res.status(httpErr.statusCode || 500).json({
+      success: false,
+      error: { message: httpErr.message || 'Internal Server Error' },
+    });
+  }
+});
+
+// POST /api/notifications/:id/read
 router.post('/:id/read', verifyFirebaseIdToken, async (req, res) => {
   const userId = req.user?.uid;
   if (!userId) {
     throw unauthorized('Unauthorized');
   }
-
   try {
     const { id } = req.params;
-
-    if (!id) {
-      throw badRequest('notification id is required');
-    }
+    if (!id) throw badRequest('notification id is required');
 
     const updated = await Notification.findOneAndUpdate(
       { _id: id, userId },
@@ -214,18 +262,40 @@ router.post('/:id/read', verifyFirebaseIdToken, async (req, res) => {
     if (!updated) {
       return res.status(404).json({ error: 'notification not found' });
     }
-
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error('Notifications MarkRead Error:', err);
-
     if (err && err.statusCode) {
-      return res.status(err.statusCode).json({
-        success: false,
-        error: { message: err.message },
-      });
+      return res.status(err.statusCode).json({ success: false, error: { message: err.message } });
     }
+    const httpErr = mapErrorToHttpError(err);
+    return res.status(httpErr.statusCode || 500).json({
+      success: false,
+      error: {
+        message: httpErr.message || 'Internal Server Error',
+        ...(httpErr.details ? { details: httpErr.details } : {}),
+      },
+    });
+  }
+});
 
+// DELETE /api/notifications/:id
+router.delete('/:id', verifyFirebaseIdToken, async (req, res) => {
+  const userId = req.user?.uid;
+  if (!userId) {
+    throw unauthorized('Unauthorized');
+  }
+  try {
+    const { id } = req.params;
+    if (!id) throw badRequest('notification id is required');
+
+    const deleted = await Notification.findOneAndDelete({ _id: id, userId });
+    if (!deleted) {
+      return res.status(404).json({ error: 'notification not found' });
+    }
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Notifications Delete Error:', err);
     const httpErr = mapErrorToHttpError(err);
     return res.status(httpErr.statusCode || 500).json({
       success: false,

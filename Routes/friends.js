@@ -10,6 +10,7 @@ const FriendRequest = require('../Model/FriendRequest');
 const Friendship = require('../Model/Friendship');
 const UserProfile = require('../Model/UserProfile');
 const Notification = require('../Model/Notification');
+const { createNotification } = require('../services/notificationService');
 
 function toUserId(uid) {
   return typeof uid === 'string' ? uid : null;
@@ -79,17 +80,119 @@ async function updateFriendshipUsersForAccepted(u1, u2) {
   ]);
 }
 
-async function notify(userId, title, message, type = 'social') {
-  await Notification.create({
-    userId,
-    title,
-    message,
-    type,
-    read: false,
-  });
+// Helper to build a normalized friend profile object from a UserProfile doc and relationship.
+function toFriendProfile(profile, relationship) {
+  return {
+    _id: profile.firebaseUid,
+    uid: profile.firebaseUid,
+    name: profile.name || null,
+    username: profile.username || null,
+    nickname: profile.nickname || null,
+    photo: profile.photo || profile.profilePhoto || null,
+    headline: profile.headline || null,
+    bio: profile.bio || null,
+    location: profile.location || null,
+    friendCount: profile.friendCount || 0,
+    relationship: relationship || 'none',
+  };
 }
 
-// GET /api/friends/requests?userId=...
+// GET /api/friends/list — accepted friends of the caller, with mutual counts.
+router.get(
+  '/list',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const caller = toUserId(req.user?.uid);
+    if (!caller) throw unauthorized('Unauthorized');
+
+    const friendships = await Friendship.find({ userId: caller, status: 'accepted' }).lean();
+    const friendIds = friendships.map((f) => f.friendId).filter(Boolean);
+
+    if (!friendIds.length) {
+      return res.status(200).json({ success: true, data: [], pagination: { total: 0, page: 1, pageSize: friendIds.length } });
+    }
+
+    const profiles = await UserProfile.find({ firebaseUid: { $in: friendIds } }).lean();
+    const profileMap = new Map(profiles.map((p) => [p.firebaseUid, p]));
+
+    const data = friendIds
+      .map((friendId) => profileMap.get(friendId))
+      .filter(Boolean)
+      .map((p) => toFriendProfile(p, 'friends'));
+
+    return res.status(200).json({ success: true, data, pagination: { total: data.length, page: 1, pageSize: data.length } });
+  })
+);
+
+// GET /api/friends/pending — incoming pending requests with sender profile.
+router.get(
+  '/pending',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const caller = toUserId(req.user?.uid);
+    if (!caller) throw unauthorized('Unauthorized');
+
+    const requests = await FriendRequest.find({ receiver: caller, status: 'pending' })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const senderIds = [...new Set(requests.map((r) => r.sender).filter(Boolean))];
+    const profiles = senderIds.length
+      ? await UserProfile.find({ firebaseUid: { $in: senderIds } }).lean()
+      : [];
+    const profileMap = new Map(profiles.map((p) => [p.firebaseUid, p]));
+
+    const data = requests.map((r) => ({
+      _id: String(r._id),
+      requestId: String(r._id),
+      senderId: String(r.sender),
+      receiverId: String(r.receiver),
+      status: r.status,
+      createdAtISO: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+      sender: profileMap.get(r.sender)
+        ? toFriendProfile(profileMap.get(r.sender), 'request_received')
+        : null,
+    })).sort((a, b) => new Date(b.createdAtISO) - new Date(a.createdAtISO));
+
+    return res.status(200).json({ success: true, data });
+  })
+);
+
+// GET /api/friends/sent — outgoing pending/cancellable requests with receiver profile.
+router.get(
+  '/sent',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const caller = toUserId(req.user?.uid);
+    if (!caller) throw unauthorized('Unauthorized');
+
+    const requests = await FriendRequest.find({ sender: caller, status: 'pending' })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const receiverIds = [...new Set(requests.map((r) => r.receiver).filter(Boolean))];
+    const profiles = receiverIds.length
+      ? await UserProfile.find({ firebaseUid: { $in: receiverIds } }).lean()
+      : [];
+    const profileMap = new Map(profiles.map((p) => [p.firebaseUid, p]));
+
+    const data = requests.map((r) => ({
+      _id: String(r._id),
+      requestId: String(r._id),
+      senderId: String(r.sender),
+      receiverId: String(r.receiver),
+      status: r.status,
+      createdAtISO: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+      receiver: profileMap.get(r.receiver)
+        ? toFriendProfile(profileMap.get(r.receiver), 'request_sent')
+        : null,
+    })).sort((a, b) => new Date(b.createdAtISO) - new Date(a.createdAtISO));
+
+    return res.status(200).json({ success: true, data });
+  })
+);
+
+// GET /api/friends/requests?userId=... (legacy combined view)
 router.get(
   '/requests',
   verifyFirebaseIdToken,
@@ -102,7 +205,6 @@ router.get(
 
     // Demo-friendly: allow mock users (e.g. u_0000) to read without a real
     // Firebase profile so the friends page doesn't 401-loop in dev.
-    // Only real (non-mock) callers are restricted to viewing their own requests.
     const isMockUser = /^[a-z]+_\d+$/.test(userId) && !/^[A-Za-z0-9]{20,}$/.test(userId);
     if (caller !== userId && !isMockUser) {
       throw forbidden('You can only view your own requests.');
@@ -119,7 +221,6 @@ router.get(
       .sort({ createdAt: -1 })
       .lean();
 
-    // Frontend expects senderId/receiverId/status and createdAtISO-ish.
     const normalized = requests.map((r) => ({
       _id: String(r._id),
       senderId: String(r.sender),
@@ -158,14 +259,38 @@ router.post(
     const senderProfile = await UserProfile.findOne({ firebaseUid: sender }).lean();
     const senderName = senderProfile?.name || senderProfile?.username || 'Someone';
 
-    await notify(
-      receiver,
-      `${senderName} sent you a friend request`,
-      'You have a new friend request. Accept or reject it. ',
-      'social'
-    );
+    await createNotification({
+      userId: receiver,
+      title: `${senderName} sent you a friend request`,
+      message: 'You have a new friend request. Accept or reject it.',
+      type: 'social',
+      fromUser: sender,
+      link: '/friends',
+      action: 'View',
+      entityType: 'friend_request',
+      entityId: String(fr._id),
+    });
 
     return res.status(201).json({ success: true, data: fr });
+  })
+);
+
+// POST /api/friends/cancel — cancel an outgoing pending request.
+router.post(
+  '/cancel',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const sender = toUserId(req.user?.uid);
+    const receiver = toUserId(req.body?.receiver);
+
+    if (!sender) throw unauthorized('Unauthorized');
+    if (!receiver) throw badRequest('receiver is required');
+    if (sender === receiver) throw forbidden('Cannot cancel request to yourself.');
+
+    const fr = await FriendRequest.findOneAndDelete({ sender, receiver, status: 'pending' });
+    if (!fr) throw notFound('Pending friend request not found.');
+
+    return res.status(200).json({ success: true });
   })
 );
 
@@ -199,12 +324,17 @@ router.post(
     const receiverName = (await UserProfile.findOne({ firebaseUid: receiver }).lean())?.name || 'Your friend';
     const senderName = senderProfile?.name || senderProfile?.username || 'Someone';
 
-    await notify(
-      fr.sender,
-      `${receiverName} accepted your friend request`,
-      'Your friend request was accepted. You can now message each other.',
-      'social'
-    );
+    await createNotification({
+      userId: fr.sender,
+      title: `${receiverName} accepted your friend request`,
+      message: 'Your friend request was accepted. You can now message each other.',
+      type: 'social',
+      fromUser: receiver,
+      link: '/friends',
+      action: 'View',
+      entityType: 'friendship',
+      entityId: String(receiver),
+    });
 
     return res.status(200).json({ success: true });
   })
@@ -238,12 +368,17 @@ router.post(
     const senderName = senderProfile?.name || senderProfile?.username || 'Your friend';
     const receiverName = receiverProfile?.name || receiverProfile?.username || 'Someone';
 
-    await notify(
-      fr.sender,
-      `${receiverName} rejected your friend request`,
-      'Your friend request was rejected.',
-      'social'
-    );
+    await createNotification({
+      userId: fr.sender,
+      title: `${receiverName} rejected your friend request`,
+      message: 'Your friend request was rejected.',
+      type: 'social',
+      fromUser: receiver,
+      link: '/friends',
+      action: 'View',
+      entityType: 'friend_request',
+      entityId: String(receiver),
+    });
 
     return res.status(200).json({ success: true });
   })
@@ -275,7 +410,6 @@ router.get(
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp(escaped, "i");
 
-    // Search across friend profile fields and friendship nickname
     const friends = await Friendship.aggregate([
       { $match: { userId: caller, status: "accepted", friendId: { $in: ids } } },
       {
@@ -286,7 +420,6 @@ router.get(
           as: "profile",
         },
       },
-      // Ensure we only return matches where the friend profile exists.
       { $match: { "profile.firebaseUid": { $exists: true, $ne: null } } },
       { $unwind: { path: "$profile", preserveNullAndEmptyArrays: true } },
       {
@@ -313,7 +446,6 @@ router.get(
       },
     ]);
 
-    // Ensure required fields exist with safe defaults
     const normalized = (friends || []).map((f) => ({
       _id: String(f._id),
       name: f.name || null,
@@ -341,7 +473,6 @@ router.patch(
     if (!friendId) throw badRequest("friendId is required");
     if (caller === friendId) throw forbidden("Cannot set nickname for yourself.");
 
-    // validate friendship ownership & accepted status
     const friendship = await Friendship.findOne({
       userId: caller,
       friendId,
@@ -362,7 +493,6 @@ router.patch(
     friendship.nickname = nickname;
     await friendship.save();
 
-    // Return updated friendship doc with shape expected by frontend
     return res.status(200).json({ success: true, data: friendship });
   })
 );
@@ -407,5 +537,3 @@ router.delete(
 );
 
 module.exports = router;
-
-

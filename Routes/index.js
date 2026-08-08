@@ -50,6 +50,14 @@ router.use("/notifications", notifications);
 // Public/community endpoints
 router.use("/public", publicRoutes);
 
+// User search / public profiles / nickname availability
+const users = require("./users");
+router.use("/users", users);
+
+// User profile bootstrap (lazy-create UserProfile docs for Firebase users)
+const profile = require("./profile");
+router.use("/profile", profile);
+
 // Password recovery endpoints
 router.use("/password-recovery", passwordRecovery);
 
@@ -105,3 +113,4 @@ const languageOtp = require('./languageOtp');
 router.use('/language', languageOtp);
 
 module.exports = router;
+

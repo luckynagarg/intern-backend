@@ -26,6 +26,9 @@ const subscriptionService = require('../services/subscriptionService');
 const paymentService = require('../services/paymentService');
 const invoiceService = require('../services/invoiceService');
 const razorpayPaymentService = require('../services/paymentService');
+const { createPaymentQr } = require('../services/qrService');
+const PaymentTransaction = require('../Model/PaymentTransaction');
+const plans = require('../config/subscriptionPlans');
 
 // -------------------------
 // Current subscription
@@ -105,6 +108,65 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   // Webhooks should be processed without Firebase auth.
   const event = await paymentService.handleRazorpayWebhook(req);
   res.json({ success: true, data: { received: true, event } });
+}));
+
+// -------------------------
+// Generate QR payment (Task 8)
+// -------------------------
+router.post('/qr', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const { planKey } = req.body || {};
+  if (!planKey) throw badRequest('planKey is required.');
+
+  const key = String(planKey).toLowerCase();
+  const plan = plans[key];
+  if (!plan) throw badRequest('Invalid subscription plan.');
+  if (plan.priceINR <= 0) throw badRequest('QR payment is only available for paid plans.');
+
+  const qr = await createPaymentQr({
+    amountPaise: Math.round(plan.priceINR * 100),
+    currency: 'INR',
+    description: `${plan.name} Subscription`,
+    reference: `sub_${req.user.uid}_${Date.now()}`,
+    userId: req.user.uid,
+    planKey: plan.planKey,
+  });
+
+  res.json({ success: true, data: { ...qr, planKey: plan.planKey, planName: plan.name, amount: plan.priceINR } });
+}));
+
+// -------------------------
+// Payment history (Task 7)
+// -------------------------
+router.get('/payments', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const userId = req.user.uid;
+  const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 50);
+  const skip = (page - 1) * limit;
+
+  const [payments, total] = await Promise.all([
+    PaymentTransaction.find({ userId })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    PaymentTransaction.countDocuments({ userId }),
+  ]);
+
+  res.json({
+    success: true,
+    data: payments,
+    pagination: { page, limit, total, totalPages: Math.max(Math.ceil(total / limit), 1) },
+  });
+}));
+
+// -------------------------
+// Get payment status by order id (for QR polling / success / cancel)
+// -------------------------
+router.get('/payments/:orderId', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const userId = req.user.uid;
+  const txn = await PaymentTransaction.findOne({ userId, razorpayOrderId: req.params.orderId }).lean();
+  if (!txn) throw notFound('Payment not found.');
+  res.json({ success: true, data: txn });
 }));
 
 // -------------------------

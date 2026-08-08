@@ -12,7 +12,7 @@ const UserProfileSchema = new mongoose.Schema(
       unique: true,
     },
 
-    username: {
+username: {
       type: String,
       default: null,
       unique: true,
@@ -21,12 +21,37 @@ const UserProfileSchema = new mongoose.Schema(
       lowercase: true,
     },
 
+    // Public nickname (@username style). Unique, validated 4-20 chars.
+    nickname: {
+      type: String,
+      default: null,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
+    // Lowercased copy of nickname for case-insensitive unique + search.
+    lowercaseNickname: {
+      type: String,
+      default: null,
+      unique: true,
+      sparse: true,
+      trim: true,
+      lowercase: true,
+    },
+    // Timestamp of last nickname change (for release-on-change logic).
+    nicknameUpdatedAt: { type: Date, default: null },
+
     name: { type: String, default: null, trim: true },
     email: { type: String, default: null, trim: true, lowercase: true },
     photo: { type: String, default: null },
+    profilePhoto: { type: String, default: null },
+    coverPhoto: { type: String, default: null },
 
     headline: { type: String, default: null },
     bio: { type: String, default: null },
+
+    // Verified badge flag for users (admin-verified accounts).
+    verified: { type: Boolean, default: false },
 
     location: { type: String, default: null },
     skills: { type: [String], default: [] },

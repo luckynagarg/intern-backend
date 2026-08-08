@@ -73,7 +73,7 @@ async function createRazorpayOrder({ userId, planKey, userEmail, userName }) {
   };
 }
 
-async function verifyPaymentAndActivate({ userId, planKey, razorpayOrderId, razorpayPaymentId, razorpaySignature }) {
+async function verifyPaymentAndActivate({ userId, planKey, razorpayOrderId, razorpayPaymentId, razorpaySignature, userEmail, userName }) {
   // Enforce payment window again here as a final source-of-truth check.
   // A user could theoretically call verify outside the allowed window.
   // Subscription activation must never happen outside 10:00–11:00 IST.

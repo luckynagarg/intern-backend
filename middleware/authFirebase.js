@@ -13,10 +13,6 @@ const { getAdminOrThrow } = require('./../config/firebaseAdmin');
 
 const { unauthorized, serviceUnavailable } = require('./../utils/httpErrors');
 
-// Initialize Firebase Admin once (lazy). Avoid eager init so dev can start without creds.
-// auth requirements will trigger initialization when the middleware is actually used.
-// (initFirebaseAdmin() will warn and keep firebase-admin uninitialized if creds are missing.)
-
 /**
  * Express middleware that verifies Firebase ID tokens.
  *
@@ -26,15 +22,9 @@ const { unauthorized, serviceUnavailable } = require('./../utils/httpErrors');
 const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization;
 
-  // Temporary detailed logs for auth auditing.
-  // Do NOT log full token.
-  console.log('[authFirebase] Authorization header received:', !!header);
-  if (header && typeof header === 'string') {
-    console.log('[authFirebase] Authorization header prefix:', header.slice(0, 12));
-  }
-
+  // Only log whether a header/token is present (never the token itself) and do it at
+  // debug level to avoid noisy production logs.
   const hasBearer = !!header && header.startsWith('Bearer ');
-  console.log('[authFirebase] Bearer token exists:', hasBearer);
 
   if (!hasBearer) {
     // A missing/invalid header is a client error, not server error.
@@ -44,7 +34,6 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
   }
 
   const token = header.slice('Bearer '.length).trim();
-  console.log('[authFirebase] token length:', token?.length || 0);
   if (!token) throw unauthorized('Missing Firebase ID token (after Bearer).');
 
   // Decode & verify the token signature.
@@ -55,28 +44,35 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
     admin = getAdminOrThrow();
   } catch (e) {
     // Firebase Admin credentials missing/malformed on the deployment.
-    // Fail fast with a clear 503 (Service Unavailable) instead of a generic 500,
-    // so the root cause is obvious to both the client and in the logs.
-    console.error('[authFirebase] Firebase Admin not initialized:', e?.message);
+    // Include the root cause (never secrets) so the 503 is actionable.
+    const reason = (e && e.message) || 'unknown reason';
+    console.error('[authFirebase] Firebase Admin not initialized:', reason);
     throw serviceUnavailable(
-      'Authentication service is not configured. Contact the administrator.'
+      `Authentication service is not configured. Reason: ${reason}. Contact the administrator.`
     );
   }
 
+  // firebase-admin v14: use getAuth() from the auth subpath to verify tokens.
+  // admin.auth() is not available in v14; the auth service is registered via
+  // require('firebase-admin/auth') in config/firebaseAdmin.js.
   let decoded;
+  let authService;
+  try {
+    const { getAuth } = require('firebase-admin/auth');
+    authService = getAuth();
+  } catch (e) {
+    console.error('[authFirebase] Failed to load firebase-admin/auth:', e.message);
+    throw serviceUnavailable('Authentication service is not configured. Contact the administrator.');
+  }
 
   try {
-    decoded = await admin.auth().verifyIdToken(token);
-
-    console.log('[authFirebase] verifyIdToken SUCCESS');
-    console.log('[authFirebase] decoded uid:', decoded?.uid || null);
+    decoded = await authService.verifyIdToken(token);
   } catch (e) {
     const code = e && e.code ? e.code : null;
     const msg = (e && (e.message || e.toString())) || 'unknown error';
 
-    console.log('[authFirebase] verifyIdToken FAILURE');
-    console.log('[authFirebase] error code:', code);
-    console.log('[authFirebase] error message:', msg);
+    // Log at error level without the full token.
+    console.warn('[authFirebase] verifyIdToken failed:', code || 'unknown');
 
     // If firebase-admin wasn't initialized due to missing env vars,
     // return a clear client error instead of crashing.
@@ -84,7 +80,6 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
   }
 
   if (!decoded || !decoded.uid) {
-    console.log('[authFirebase] decoded missing uid');
     throw unauthorized('Invalid Firebase token: missing uid/claims.');
   }
 

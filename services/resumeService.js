@@ -56,7 +56,7 @@ function validateResumeInput(resumeData) {
   if (!personalInfo) throw badRequest('personalInfo is required.');
 }
 
-async function createResumePurchase({ userId, email, resumeData, photoUrl }) {
+async function createResumePurchase({ userId, email, resumeData, photoUrl, testBypass = false }) {
   ensureEmailPresent(email);
   validateResumeInput(resumeData);
 
@@ -65,9 +65,14 @@ async function createResumePurchase({ userId, email, resumeData, photoUrl }) {
     userId,
     resumeData,
     photoUrl: photoUrl || null,
-    status: 'otp_pending',
-    otpVerifiedAt: null,
+    status: testBypass ? 'otp_verified' : 'otp_pending',
+    otpVerifiedAt: testBypass ? new Date() : null,
   });
+
+  // TEST BYPASS: skip OTP email entirely — resume is already OTP-verified.
+  if (testBypass) {
+    return { resumeId: resume._id, otpExpiresAt: null, testBypass: true };
+  }
 
   // Issue OTP challenge
   const existing = await ResumeOtpVerification.findOne({ userId, email }).sort({ createdAt: -1 });
