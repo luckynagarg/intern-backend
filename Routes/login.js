@@ -99,7 +99,7 @@ router.post(
         }).catch(() => {});
 
         // Exact message required by prompt
-        throw forbidden("Mobile login is allowed only between 10:00 AM and 1:00 PM IST.");
+        throw forbidden("Mobile login is available only between 10:00 AM and 1:00 PM IST.");
       }
     }
 
