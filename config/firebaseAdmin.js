@@ -1,67 +1,132 @@
-const admin = require('firebase-admin');
-const fs = require('fs');
-const path = require('path');
+const {
+  initializeApp,
+  getApps,
+  cert,
+} = require("firebase-admin/app");
+
+const fs = require("fs");
+const path = require("path");
 
 /**
- * Safely parse Firebase service-account JSON.
+ * Parse Firebase service-account JSON.
  *
  * Supports:
  * 1. Normal JSON
- * 2. JSON stored in Render environment variables
- * 3. Literal \n inside private_key
+ * 2. JSON stored inside Render environment variables
+ * 3. Escaped \n characters inside private_key
  */
-function safeParseServiceAccountJSON(raw) {
+function parseServiceAccount(raw) {
   if (!raw) {
     return null;
   }
 
-  if (typeof raw !== 'string') {
+  // If an object is already provided
+  if (typeof raw === "object") {
     return raw;
   }
 
-  const trimmed = raw.trim();
+  const value = String(raw).trim();
 
-  if (!trimmed) {
+  if (!value) {
     return null;
   }
 
-  // Convert literal "\n" characters into real newlines.
-  const normalized = trimmed.replace(/\\n/g, '\n');
-
-  return JSON.parse(normalized);
+  // First try normal JSON.
+  try {
+    return JSON.parse(value);
+  } catch (firstError) {
+    // If private_key contains escaped newlines,
+    // convert literal \n into real newline characters.
+    try {
+      const normalized = value.replace(/\\n/g, "\n");
+      return JSON.parse(normalized);
+    } catch (secondError) {
+      throw new Error(
+        "[firebaseAdmin] FIREBASE_SERVICE_ACCOUNT is not valid JSON."
+      );
+    }
+  }
 }
 
 /**
- * Load Firebase service-account credentials from a file.
+ * Validate Firebase service-account credentials.
+ */
+function validateServiceAccount(account) {
+  if (!account || typeof account !== "object") {
+    throw new Error(
+      "[firebaseAdmin] Firebase service account must be a JSON object."
+    );
+  }
+
+  const missing = [];
+
+  if (!account.project_id) {
+    missing.push("project_id");
+  }
+
+  if (!account.client_email) {
+    missing.push("client_email");
+  }
+
+  if (!account.private_key) {
+    missing.push("private_key");
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `[firebaseAdmin] Firebase service account is missing: ${missing.join(
+        ", "
+      )}`
+    );
+  }
+
+  return {
+    project_id: account.project_id,
+    client_email: account.client_email,
+    private_key: String(account.private_key).replace(/\\n/g, "\n"),
+  };
+}
+
+/**
+ * Load Firebase service-account JSON from a file.
  *
  * Mainly useful for local development.
- * Render production should preferably use FIREBASE_SERVICE_ACCOUNT.
+ * Render production should preferably use
+ * FIREBASE_SERVICE_ACCOUNT.
  */
-function readServiceAccountFromPath() {
-  const rawPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+function loadServiceAccountFromFile() {
+  const configuredPath =
+    process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
 
-  if (!rawPath) {
+  if (!configuredPath) {
     return null;
   }
 
-  let resolved = String(rawPath).trim();
+  let filePath = String(configuredPath).trim();
 
   // Resolve relative paths from backend root.
-  if (!/^([a-zA-Z]:[\\/]|\/)/.test(resolved)) {
-    resolved = path.join(__dirname, '..', resolved);
+  if (!path.isAbsolute(filePath)) {
+    filePath = path.resolve(__dirname, "..", filePath);
   }
 
-  if (!fs.existsSync(resolved)) {
+  if (!fs.existsSync(filePath)) {
     throw new Error(
-      `[firebaseAdmin] FIREBASE_SERVICE_ACCOUNT_PATH points to a missing file: ${resolved}`
+      `[firebaseAdmin] FIREBASE_SERVICE_ACCOUNT_PATH points to a missing file: ${filePath}`
     );
   }
 
   try {
-    return JSON.parse(fs.readFileSync(resolved, 'utf8'));
+    const raw = fs.readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+
+    return validateServiceAccount(parsed);
   } catch (error) {
+    if (error?.message?.startsWith("[firebaseAdmin]")) {
+      throw error;
+    }
+
     throw new Error(
-      '[firebaseAdmin] Firebase service-account file contains invalid JSON.'
+      "[firebaseAdmin] Firebase service-account file contains invalid JSON."
     );
   }
 }
@@ -70,131 +135,75 @@ function readServiceAccountFromPath() {
  * Get Firebase Admin credentials.
  *
  * Priority:
+ *
  * 1. FIREBASE_SERVICE_ACCOUNT
  * 2. FIREBASE_SERVICE_ACCOUNT_PATH
  * 3. Individual environment variables
  */
-function getRequiredCertFromEnvOrThrow() {
+function getFirebaseCredentials() {
   // =========================================================
-  // OPTION 1: Complete Firebase service-account JSON
+  // OPTION 1
+  // Complete Firebase JSON from Render environment
   // =========================================================
 
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+  const serviceAccountJson =
+    process.env.FIREBASE_SERVICE_ACCOUNT;
 
   if (serviceAccountJson) {
-    let parsed;
+    const parsed = parseServiceAccount(serviceAccountJson);
 
-    try {
-      parsed = safeParseServiceAccountJSON(serviceAccountJson);
-    } catch (error) {
-      throw new Error(
-        '[firebaseAdmin] FIREBASE_SERVICE_ACCOUNT is not valid JSON.'
-      );
-    }
-
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error(
-        '[firebaseAdmin] FIREBASE_SERVICE_ACCOUNT must contain a JSON object.'
-      );
-    }
-
-    const missing = [];
-
-    if (!parsed.project_id) {
-      missing.push('project_id');
-    }
-
-    if (!parsed.client_email) {
-      missing.push('client_email');
-    }
-
-    if (!parsed.private_key) {
-      missing.push('private_key');
-    }
-
-    if (missing.length > 0) {
-      throw new Error(
-        `[firebaseAdmin] FIREBASE_SERVICE_ACCOUNT JSON is missing required fields: ${missing.join(
-          ', '
-        )}.`
-      );
-    }
-
-    return {
-      project_id: parsed.project_id,
-      client_email: parsed.client_email,
-      private_key: parsed.private_key,
-    };
+    return validateServiceAccount(parsed);
   }
 
   // =========================================================
-  // OPTION 2: Firebase service-account JSON file
+  // OPTION 2
+  // Firebase JSON file
   // =========================================================
 
-  const fromPath = readServiceAccountFromPath();
+  const fromFile = loadServiceAccountFromFile();
 
-  if (fromPath) {
-    const missing = [];
-
-    if (!fromPath.project_id) {
-      missing.push('project_id');
-    }
-
-    if (!fromPath.client_email) {
-      missing.push('client_email');
-    }
-
-    if (!fromPath.private_key) {
-      missing.push('private_key');
-    }
-
-    if (missing.length > 0) {
-      throw new Error(
-        `[firebaseAdmin] Service account file is missing required fields: ${missing.join(
-          ', '
-        )}.`
-      );
-    }
-
-    return {
-      project_id: fromPath.project_id,
-      client_email: fromPath.client_email,
-      private_key: fromPath.private_key,
-    };
+  if (fromFile) {
+    return fromFile;
   }
 
   // =========================================================
-  // OPTION 3: Individual Firebase environment variables
+  // OPTION 3
+  // Individual environment variables
   // =========================================================
 
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+  const projectId =
+    process.env.FIREBASE_PROJECT_ID;
+
+  const clientEmail =
+    process.env.FIREBASE_CLIENT_EMAIL;
+
+  let privateKey =
+    process.env.FIREBASE_PRIVATE_KEY;
 
   const missing = [];
 
   if (!projectId) {
-    missing.push('FIREBASE_PROJECT_ID');
+    missing.push("FIREBASE_PROJECT_ID");
   }
 
   if (!clientEmail) {
-    missing.push('FIREBASE_CLIENT_EMAIL');
+    missing.push("FIREBASE_CLIENT_EMAIL");
   }
 
   if (!privateKey) {
-    missing.push('FIREBASE_PRIVATE_KEY');
+    missing.push("FIREBASE_PRIVATE_KEY");
   }
 
   if (missing.length > 0) {
     throw new Error(
-      `[firebaseAdmin] Missing Firebase Admin credentials. Provide FIREBASE_SERVICE_ACCOUNT, FIREBASE_SERVICE_ACCOUNT_PATH, or all of: ${missing.join(
-        ', '
-      )}.`
+      `[firebaseAdmin] Missing Firebase credentials: ${missing.join(
+        ", "
+      )}`
     );
   }
 
-  // Convert literal "\n" characters into real newlines.
-  privateKey = privateKey.replace(/\\n/g, '\n');
+  // Convert literal \n into actual newlines.
+  privateKey = privateKey.replace(/\\n/g, "\n");
 
   return {
     project_id: projectId,
@@ -207,26 +216,28 @@ function getRequiredCertFromEnvOrThrow() {
  * Initialize Firebase Admin exactly once.
  */
 function initFirebaseAdmin() {
-  // Prevent multiple Firebase Admin initializations.
-  if (
-    typeof admin.getApps === 'function' &&
-    admin.getApps().length > 0
-  ) {
-    return admin;
+  // Prevent duplicate initialization.
+  const apps = getApps();
+
+  if (apps.length > 0) {
+    return apps[0];
   }
 
-  const cert = getRequiredCertFromEnvOrThrow();
+  // Get credentials.
+  const credentials = getFirebaseCredentials();
 
-  // Never log Firebase credentials.
-  admin.initializeApp({
-    credential: admin.credential.cert(cert),
+  // Initialize Firebase Admin.
+  // Never log credentials or private_key.
+  return initializeApp({
+    credential: cert(credentials),
   });
-
-  return admin;
 }
 
 /**
- * Return Firebase Admin or throw a clear configuration error.
+ * Return Firebase Admin app.
+ *
+ * Throws a clear error if Firebase
+ * configuration is missing or invalid.
  */
 function getAdminOrThrow() {
   try {
@@ -234,7 +245,7 @@ function getAdminOrThrow() {
   } catch (error) {
     throw new Error(
       error?.message ||
-        '[firebaseAdmin] Firebase Admin initialization failed due to invalid or missing credentials.'
+        "[firebaseAdmin] Firebase Admin initialization failed."
     );
   }
 }
@@ -242,5 +253,4 @@ function getAdminOrThrow() {
 module.exports = {
   initFirebaseAdmin,
   getAdminOrThrow,
-  admin,
 };
