@@ -122,11 +122,18 @@ async function resetPassword({ method, identifier }) {
   let user = null;
   try {
     if (method === 'email') {
-      const users = await admin.auth().listUsers(100, { email: normalized });
-      user = users.users && users.users.length ? users.users[0] : null;
+      try {
+        user = await admin.auth().getUserByEmail(normalized);
+      } catch (e) {
+        // No such user -> user stays null (generic response below).
+        user = null;
+      }
     } else {
-      const users = await admin.auth().listUsers(100, { phoneNumber: normalized });
-      user = users.users && users.users.length ? users.users[0] : null;
+      try {
+        user = await admin.auth().getUserByPhoneNumber(normalized);
+      } catch (e) {
+        user = null;
+      }
     }
   } catch (e) {
     throw internalServerError('Password reset service unavailable. Please try again later.');

@@ -7,6 +7,7 @@
  */
 const crypto = require('crypto');
 const LanguageOtpChallenge = require('../Model/LanguageOtpChallenge');
+const UserProfile = require('../Model/UserProfile');
 const { badRequest, forbidden, internalServerError } = require('../utils/httpErrors');
 const { sendEmailOtp } = require('./emailOtpDeliveryService');
 
@@ -128,12 +129,43 @@ async function verifyLanguageOtp({ userId, otp }) {
   record.otpConsumed = true;
   await record.save();
 
+  // Persist the verified language preference on the user's profile so the
+  // backend can validate it (frontend cannot bypass with localStorage alone).
+  await UserProfile.findOneAndUpdate(
+    { firebaseUid: userId },
+    { $addToSet: { verifiedLanguages: 'fr' } },
+    { upsert: true, setDefaultsOnInsert: true }
+  ).catch((e) => {
+    // Non-fatal: OTP is still verified, but we log to aid debugging.
+    console.error('[languageOtpService] failed to persist verifiedLanguages:', e?.message);
+  });
+
   return { verified: true };
+}
+
+/**
+ * Checks whether a user has already verified the French language via OTP.
+ *
+ * @param {string} userId
+ * @returns {Promise<{ verified: boolean }>}
+ */
+async function isLanguageVerified(userId, lang = 'fr') {
+  if (!userId) return { verified: false };
+  const profile = await UserProfile.findOne({ firebaseUid: userId })
+    .select('verifiedLanguages')
+    .lean();
+  const verified = !!(
+    profile &&
+    Array.isArray(profile.verifiedLanguages) &&
+    profile.verifiedLanguages.includes(lang)
+  );
+  return { verified };
 }
 
 module.exports = {
   issueLanguageOtp,
   verifyLanguageOtp,
+  isLanguageVerified,
   OTP_LENGTH,
   OTP_TTL_MS,
   OTP_RESEND_COOLDOWN_MS,

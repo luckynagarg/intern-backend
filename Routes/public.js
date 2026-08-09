@@ -9,22 +9,31 @@ const DailyPostLimit = require("../Model/DailyPostLimit");
 
 const { verifyFirebaseIdToken } = require("../middleware/authFirebase");
 const { badRequest } = require("../utils/httpErrors");
+const { createNotification } = require("../services/notificationService");
 
 function getTodayYMD() {
-  const d = new Date();
-   const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  // Use IST consistently for daily posting limits so they roll over at
+  // midnight IST regardless of the server's timezone.
+  const timeZone = process.env.PAYMENT_TIMEZONE || 'Asia/Kolkata';
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = fmt.formatToParts(new Date());
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return `${map.year}-${map.month}-${map.day}`;
 }
 
 function computeAllowedPerDay(friendsCount) {
   if (!friendsCount || friendsCount <= 0) return 0;
   if (friendsCount === 1) return 1;
   if (friendsCount === 2) return 2;
-  if (friendsCount > 10) return Number.POSITIVE_INFINITY;
-  // 3..10
-  return Math.min(friendsCount, 10);
+  // Business rule: 10+ friends => unlimited posting.
+  if (friendsCount >= 10) return Number.POSITIVE_INFINITY;
+  // 3..9
+  return friendsCount;
 }
 
 // Auth-protected: create a post. Identity is derived from the verified
@@ -158,13 +167,52 @@ router.post("/posts/:postId/comments", verifyFirebaseIdToken, async (req, res) =
     if (!text)
       return res.status(400).json({ error: "text required" });
 
-    const comment = await PostComment.create({
+const comment = await PostComment.create({
       postId,
       author: { userId, name: name || "", photo: photo || "" },
       text,
     });
 
+    // Notify the post author (unless they commented on their own post).
+    const post = await PublicPost.findById(postId).lean();
+    if (post && post.author && post.author.userId && post.author.userId !== userId) {
+      await createNotification({
+        userId: post.author.userId,
+        title: `${name || 'Someone'} commented on your post`,
+        message: text || 'View your post.',
+        type: 'social',
+        fromUser: userId,
+        link: '/public',
+        action: 'View',
+        entityType: 'post_comment',
+        entityId: String(comment._id),
+      });
+    }
+
     res.status(201).json(comment);
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: "internal server error" });
+  }
+});
+
+// Auth-protected: delete own comment.
+router.delete("/posts/:postId/comments/:commentId", verifyFirebaseIdToken, async (req, res) => {
+  try {
+    const { postId, commentId } = req.params;
+    const userId = req.user.uid;
+
+    if (!postId || !commentId) {
+      return res.status(400).json({ error: "postId and commentId required" });
+    }
+
+    const comment = await PostComment.findOne({ _id: commentId, postId, "author.userId": userId });
+    if (!comment) {
+      return res.status(404).json({ error: "Comment not found or you are not the author." });
+    }
+
+    await PostComment.deleteOne({ _id: comment._id });
+    return res.json({ success: true, deleted: true });
   } catch (err) {
     console.log(err);
     res.status(500).json({ error: "internal server error" });
@@ -195,7 +243,7 @@ router.post("/posts/:postId/like", verifyFirebaseIdToken, async (req, res) => {
 
     if (!postId) return res.status(400).json({ error: "postId required" });
 
-    const existing = await PostLike.findOne({ postId, userId });
+const existing = await PostLike.findOne({ postId, userId });
 
     if (existing) {
       await PostLike.deleteOne({ postId, userId });
@@ -203,7 +251,52 @@ router.post("/posts/:postId/like", verifyFirebaseIdToken, async (req, res) => {
     }
 
     await PostLike.create({ postId, userId });
+
+    // Notify the post author (unless they liked their own post).
+    const post = await PublicPost.findById(postId).lean();
+    if (post && post.author && post.author.userId && post.author.userId !== userId) {
+      const profile = await require('../Model/UserProfile').findOne({ firebaseUid: userId }).lean();
+      const likerName = profile?.name || profile?.username || 'Someone';
+      await createNotification({
+        userId: post.author.userId,
+        title: `${likerName} liked your post`,
+        message: 'Tap to view your post.',
+        type: 'social',
+        fromUser: userId,
+        link: '/public',
+        action: 'View',
+        entityType: 'post_like',
+        entityId: String(post._id),
+      });
+    }
+
     return res.json({ liked: true });
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: "internal server error" });
+  }
+});
+
+// Auth-protected: delete own post.
+router.delete("/posts/:postId", verifyFirebaseIdToken, async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user.uid;
+
+    if (!postId) return res.status(400).json({ error: "postId required" });
+
+    const post = await PublicPost.findOne({ _id: postId, "author.userId": userId });
+    if (!post) {
+      return res.status(404).json({ error: "Post not found or you are not the author." });
+    }
+
+    await Promise.all([
+      PublicPost.deleteOne({ _id: post._id }),
+      PostLike.deleteMany({ postId: post._id }),
+      PostComment.deleteMany({ postId: post._id }),
+    ]);
+
+    return res.json({ success: true, deleted: true });
   } catch (err) {
     console.log(err);
     res.status(500).json({ error: "internal server error" });

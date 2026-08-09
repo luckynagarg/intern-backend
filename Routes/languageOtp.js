@@ -16,6 +16,7 @@ const buildRateLimiter = require('../middleware/rateLimit');
 const {
   issueLanguageOtp,
   verifyLanguageOtp,
+  isLanguageVerified,
 } = require('../services/languageOtpService');
 
 // Stricter per-IP limiter for OTP endpoints (on top of the global limiter).
@@ -55,10 +56,24 @@ router.post(
 
     if (!result?.verified) throw badRequest('OTP verification failed.');
 
-    return res.status(200).json({
+return res.status(200).json({
       success: true,
       verified: true,
       message: 'OTP verified. You can now switch to French.',
+    });
+  })
+);
+
+// GET /api/language/french-otp/status — check if French is already verified
+router.get(
+  '/french-otp/status',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user.uid;
+    const result = await isLanguageVerified(userId, 'fr');
+    return res.status(200).json({
+      success: true,
+      verified: result.verified,
     });
   })
 );

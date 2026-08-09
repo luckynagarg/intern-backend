@@ -87,9 +87,18 @@ username: {
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
 
-    // Once-per-day password reset restriction for Firebase Auth password updates.
+// Once-per-day password reset restriction for Firebase Auth password updates.
     // Backward compatible: existing users will have `null/undefined`.
     lastPasswordResetAt: { type: Date, default: null },
+
+    // Languages the user has verified via OTP (e.g. switching to French).
+    // This is a server-side record so the frontend cannot bypass verification
+    // by simply setting a localStorage flag. Backward compatible.
+    verifiedLanguages: {
+      type: [String],
+      default: [],
+      index: true,
+    },
   },
   {
     // We manage updatedAt manually to keep schema consistent with existing style.
