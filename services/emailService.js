@@ -1,62 +1,51 @@
 /**
- * Unified Email Service (Resend)
+ * Unified Email Service
  *
- * Production-ready singleton Resend client.
- * - Single reusable client (created once, cached for the lifetime of the process)
- * - Validates required Resend environment variables
- * - Proper logging (never logs secrets, OTP values, or email bodies)
- * - Supports HTML and plain-text emails with optional attachments (base64)
- * - Adds a dedicated `sendOTPEmail(email, otp)` helper for OTP emails
+ * Primary: Resend
+ * Fallback: Gmail SMTP / Nodemailer
+ *
+ * Existing sendEmail, sendOTPEmail and sendInvoiceEmail
+ * interfaces are preserved.
  */
 
 const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
 // ---------------------------------------------------------------------------
-// Resend Environment Variable Helpers
+// Environment
 // ---------------------------------------------------------------------------
 
 const RESEND_REQUIRED_VARS = ['RESEND_API_KEY', 'EMAIL_FROM'];
 
-/**
- * Returns the list of missing Resend environment variables.
- * @returns {string[]}
- */
-function getMissingResendEnvVars() {
-  const missing = [];
-  for (const key of RESEND_REQUIRED_VARS) {
-    if (!process.env[key]) missing.push(key);
-  }
-  return missing;
-}
-
-/**
- * Validates that all required Resend environment variables are set.
- * Throws a clear error listing all missing variables.
- */
-function validateResendEnvVars() {
-  const missing = getMissingResendEnvVars();
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing required Resend environment variables: ${missing.join(', ')}. ` +
-      'Set them in your .env file or environment before starting the server.'
-    );
-  }
-}
+const SMTP_REQUIRED_VARS = [
+  'SMTP_HOST',
+  'SMTP_PORT',
+  'SMTP_USER',
+  'SMTP_PASS',
+];
 
 // ---------------------------------------------------------------------------
-// Singleton Resend Client
+// Resend
 // ---------------------------------------------------------------------------
 
 let _resend = null;
 
-/**
- * Creates or returns the cached Resend client.
- * Uses singleton pattern so the same client is reused for all emails.
- */
+function getMissingResendEnvVars() {
+  return RESEND_REQUIRED_VARS.filter(
+    (key) => !process.env[key]
+  );
+}
+
 function getResend() {
   if (_resend) return _resend;
 
-  validateResendEnvVars();
+  const missing = getMissingResendEnvVars();
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing Resend environment variables: ${missing.join(', ')}`
+    );
+  }
 
   const apiKey = process.env.RESEND_API_KEY;
 
@@ -69,31 +58,64 @@ function getResend() {
   return _resend;
 }
 
-/**
- * Resets the Resend client (useful for testing or re-initialization).
- */
 function resetResend() {
   _resend = null;
+}
+
+// ---------------------------------------------------------------------------
+// Gmail SMTP
+// ---------------------------------------------------------------------------
+
+let _transporter = null;
+
+function getMissingSmtpEnvVars() {
+  return SMTP_REQUIRED_VARS.filter(
+    (key) => !process.env[key]
+  );
+}
+
+function validateSmtpEnvVars() {
+  const missing = getMissingSmtpEnvVars();
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing SMTP environment variables: ${missing.join(', ')}`
+    );
+  }
+}
+
+function getTransporter() {
+  if (_transporter) return _transporter;
+
+  validateSmtpEnvVars();
+
+  console.log('[email] Gmail SMTP transporter initializing', {
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT,
+    user: process.env.SMTP_USER ? '[set]' : '[missing]',
+  });
+
+  _transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: Number(process.env.SMTP_PORT) === 465,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+
+  return _transporter;
+}
+
+function resetTransporter() {
+  _transporter = null;
 }
 
 // ---------------------------------------------------------------------------
 // Unified Email Sender
 // ---------------------------------------------------------------------------
 
-/**
- * Sends an email using the singleton Resend client.
- *
- * @param {Object} options
- * @param {string} options.toEmail - Recipient email address
- * @param {string} [options.toName] - Recipient display name
- * @param {string} options.subject - Email subject line
- * @param {string} options.html - HTML body content
- * @param {string} [options.text] - Plain-text fallback (auto-generated from html if omitted)
- * @param {Array}  [options.attachments] - Attachment objects with `filename` and `content` (base64) or `path`
- * @param {string} [options.fromEmail] - Override sender email (defaults to EMAIL_FROM)
- * @param {string} [options.fromName] - Override sender name (defaults to EMAIL_FROM_NAME)
- * @returns {Promise<Object>} The Resend response object
- */
 async function sendEmail({
   toEmail,
   toName,
@@ -104,132 +126,240 @@ async function sendEmail({
   fromEmail,
   fromName,
 }) {
-  const resend = getResend();
-
-  const senderEmail = fromEmail || process.env.EMAIL_FROM;
-  const senderName = fromName || process.env.EMAIL_FROM_NAME || 'InternArea';
-
-  // Log send attempt (never log email body, attachments, or secrets)
-  console.log('[email] sendEmail attempt', {
-    toEmail: toEmail ? '[set]' : '[missing]',
-    toName: toName ? '[set]' : '[missing]',
-    subject: subject ? subject.substring(0, 60) + (subject.length > 60 ? '...' : '') : '[missing]',
-    hasHtml: !!html,
-    hasText: !!text,
-    attachmentCount: attachments ? attachments.length : 0,
-  });
-
-  if (!senderEmail) {
-    throw new Error('EMAIL_FROM is not set. Cannot send email.');
-  }
-
   if (!toEmail) {
     throw new Error('Recipient email (toEmail) is required.');
   }
 
-  // Build the "from" address. Resend expects `Name <email>` format.
+  const senderEmail =
+    fromEmail ||
+    process.env.EMAIL_FROM ||
+    process.env.SMTP_FROM_EMAIL ||
+    process.env.SMTP_USER;
+
+  const senderName =
+    fromName ||
+    process.env.EMAIL_FROM_NAME ||
+    'InternArea';
+
   const from = `${senderName} <${senderEmail}>`;
 
-  // Build Resend message payload.
-  const message = {
-    from,
-    to: [toEmail],
-    subject,
-    html,
-    text: text || htmlToPlainText(html),
-  };
+  console.log('[email] sendEmail attempt', {
+    toEmail: '[set]',
+    toName: toName ? '[set]' : '[missing]',
+    subject: subject
+      ? subject.substring(0, 60) +
+        (subject.length > 60 ? '...' : '')
+      : '[missing]',
+    hasHtml: !!html,
+    hasText: !!text,
+    attachmentCount: attachments
+      ? attachments.length
+      : 0,
+  });
 
-  // Attachments: Resend accepts `content` as base64 string. Support both
-  // `path` (read file) and direct `content` (base64) for compatibility.
-  if (attachments && attachments.length > 0) {
-    message.attachments = [];
-    for (const att of attachments) {
-      if (att.content) {
-        message.attachments.push({
-          filename: att.filename,
-          content: att.content,
-        });
-      } else if (att.path) {
-        const fs = require('fs');
-        const fileBuffer = fs.readFileSync(att.path);
-        message.attachments.push({
-          filename: att.filename || att.path.split('/').pop(),
-          content: fileBuffer.toString('base64'),
-        });
+  // -----------------------------------------------------------------------
+  // Build common message
+  // -----------------------------------------------------------------------
+
+  const plainText =
+    text || htmlToPlainText(html);
+
+  // -----------------------------------------------------------------------
+  // 1. TRY RESEND
+  // -----------------------------------------------------------------------
+
+  if (
+    process.env.RESEND_API_KEY &&
+    process.env.EMAIL_FROM
+  ) {
+    try {
+      const resend = getResend();
+
+      const message = {
+        from,
+        to: [toEmail],
+        subject,
+        html,
+        text: plainText,
+      };
+
+      if (attachments && attachments.length > 0) {
+        message.attachments = [];
+
+        for (const att of attachments) {
+          if (att.content) {
+            message.attachments.push({
+              filename: att.filename,
+              content: att.content,
+            });
+          } else if (att.path) {
+            const fs = require('fs');
+
+            const fileBuffer =
+              fs.readFileSync(att.path);
+
+            message.attachments.push({
+              filename:
+                att.filename ||
+                att.path.split('/').pop(),
+              content:
+                fileBuffer.toString('base64'),
+            });
+          }
+        }
       }
+
+      const { data, error } =
+        await resend.emails.send(message);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      console.log('[email] Resend send success', {
+        id: data?.id,
+      });
+
+      return {
+        data,
+        error: null,
+        provider: 'resend',
+      };
+    } catch (err) {
+      console.warn(
+        '[email] Resend failed, trying Gmail SMTP fallback',
+        {
+          error: err.message,
+        }
+      );
     }
+  } else {
+    console.warn(
+      '[email] Resend not configured, using Gmail SMTP'
+    );
   }
 
-  try {
-    const { data, error } = await resend.emails.send(message);
+  // -----------------------------------------------------------------------
+  // 2. FALLBACK TO GMAIL SMTP
+  // -----------------------------------------------------------------------
 
-    if (error) {
-      throw new Error(`Resend send failed: ${error.message}`);
+  try {
+    const transporter = getTransporter();
+
+    const message = {
+      from: `${senderName} <${
+        process.env.SMTP_FROM_EMAIL ||
+        process.env.SMTP_USER
+      }>`,
+      to: toName
+        ? `${toName} <${toEmail}>`
+        : toEmail,
+      subject,
+      html,
+      text: plainText,
+    };
+
+    if (attachments && attachments.length > 0) {
+      message.attachments = [];
+
+      for (const att of attachments) {
+        if (att.content) {
+          message.attachments.push({
+            filename: att.filename,
+            content: att.content,
+            encoding: 'base64',
+          });
+        } else if (att.path) {
+          message.attachments.push({
+            filename:
+              att.filename ||
+              att.path.split('/').pop(),
+            path: att.path,
+          });
+        }
+      }
     }
 
-    console.log('[email] sendEmail success', {
-      id: data?.id,
-      toEmail: toEmail ? '[set]' : '[missing]',
-      subject: subject ? '[set]' : '[missing]',
+    const info =
+      await transporter.sendMail(message);
+
+    console.log('[email] Gmail SMTP send success', {
+      messageId: info?.messageId,
     });
 
-    return { data, error: null };
+    return {
+      data: info,
+      error: null,
+      provider: 'gmail',
+    };
   } catch (err) {
-    console.error('[email] sendEmail FAILED', {
-      error: err.message,
-      toEmail: toEmail ? '[set]' : '[missing]',
-      subject: subject ? '[set]' : '[missing]',
-    });
-    throw err;
+    console.error(
+      '[email] Gmail SMTP fallback FAILED',
+      {
+        error: err.message,
+      }
+    );
+
+    throw new Error(
+      `Email sending failed with both Resend and Gmail SMTP. ${err.message}`
+    );
   }
 }
 
-/**
- * Strips HTML tags to produce a rough plain-text fallback.
- * @param {string} html
- * @returns {string}
- */
+// ---------------------------------------------------------------------------
+// HTML → Plain Text
+// ---------------------------------------------------------------------------
+
 function htmlToPlainText(html) {
   if (!html) return '';
+
   return html
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>/gi, '\n\n')
     .replace(/<\/li>/gi, '\n')
     .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
-/**
- * Sends a professional HTML OTP email via Resend.
- *
- * @param {string} email - Recipient email address
- * @param {string} otp - The 6-digit OTP
- * @param {Object} [options] - Optional overrides
- * @param {string} [options.toName] - Recipient display name
- * @param {string} [options.subject] - Custom subject line
- * @param {string} [options.purpose] - 'verification' | 'login' | 'passwordReset' | 'resumeCreation'
- * @param {number} [options.expiryMinutes] - OTP validity in minutes
- * @returns {Promise<Object>} The Resend response object
- */
-async function sendOTPEmail(email, otp, options = {}) {
-  const { toName, subject, purpose = 'verification', expiryMinutes = 5 } = options;
+// ---------------------------------------------------------------------------
+// OTP Email
+// ---------------------------------------------------------------------------
+
+async function sendOTPEmail(
+  email,
+  otp,
+  options = {}
+) {
+  const {
+    toName,
+    subject,
+    purpose = 'verification',
+    expiryMinutes = 5,
+  } = options;
 
   if (!email) {
-    throw new Error('Recipient email is required for OTP email.');
-  }
-  if (!otp) {
-    throw new Error('OTP is required for OTP email.');
+    throw new Error(
+      'Recipient email is required for OTP email.'
+    );
   }
 
-  const { buildOtpEmailHtml, buildOtpPlainText } = require('./emailTemplates');
+  if (!otp) {
+    throw new Error(
+      'OTP is required for OTP email.'
+    );
+  }
+
+  const {
+    buildOtpEmailHtml,
+    buildOtpPlainText,
+  } = require('./emailTemplates');
 
   const html = buildOtpEmailHtml({
     toName,
@@ -245,32 +375,55 @@ async function sendOTPEmail(email, otp, options = {}) {
     expiryMinutes,
   });
 
-  const defaultSubject = 'InternArea - Your One-Time Password (OTP)';
-
   return sendEmail({
     toEmail: email,
     toName,
-    subject: subject || defaultSubject,
+    subject:
+      subject ||
+      'InternArea - Your One-Time Password (OTP)',
     html,
     text,
   });
 }
 
-/**
- * Shorthand for sending an email using the buildInvoiceEmailHtml template.
- * Kept for backward compatibility with paymentService.js and razorpaySubscriptionService.js.
- */
-async function sendInvoiceEmail({ toEmail, toName, subject, html, attachments }) {
-  return sendEmail({ toEmail, toName, subject, html, attachments });
+// ---------------------------------------------------------------------------
+// Invoice Email
+// ---------------------------------------------------------------------------
+
+async function sendInvoiceEmail({
+  toEmail,
+  toName,
+  subject,
+  html,
+  attachments,
+}) {
+  return sendEmail({
+    toEmail,
+    toName,
+    subject,
+    html,
+    attachments,
+  });
 }
+
+// ---------------------------------------------------------------------------
+// Exports
+// ---------------------------------------------------------------------------
 
 module.exports = {
   getResend,
   resetResend,
+
+  getTransporter,
+  resetTransporter,
+
   sendEmail,
   sendInvoiceEmail,
   sendOTPEmail,
-  validateResendEnvVars,
+
+  validateSmtpEnvVars,
+  getMissingSmtpEnvVars,
   getMissingResendEnvVars,
+
   htmlToPlainText,
 };
