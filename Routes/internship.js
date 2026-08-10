@@ -25,34 +25,13 @@ router.post("/", async (req, res) => {
     return res.status(500).json({ error: "internal server error" });
   }
 });
-const getMockInternships = () => [
-  {
-    _id: "mock-intern-1",
-    title: "Demo Product Intern",
-    company: "Internarea",
-    location: "Remote",
-    category: "Product Management",
-    aboutCompany: "Demo company",
-    aboutInternship: "Demo internship description",
-    whoCanApply: "Students and freshers",
-    perks: ["Mentorship", "Certificate"],
-    numberOfOpening: 5,
-    stipend: "₹15,000/month",
-    startDate: "2026-01-15",
-    additionalInfo: "This is mock data",
-  },
-];
-
 router.get("/", async (req, res) => {
   try {
-    const data = await Internship.find().lean();
-    if (!data || data.length === 0) {
-      return res.status(200).json(getMockInternships());
-    }
-    return res.status(200).json(data);
+    const data = await Internship.find().sort({ createdAt: -1 }).lean();
+    return res.status(200).json({ success: true, data });
   } catch (error) {
-    console.log("Internship GET / failed, returning mock:", error?.message || error);
-    return res.status(200).json(getMockInternships());
+    console.log("Internship GET / failed:", error?.message || error);
+    return res.status(500).json({ error: "internal server error" });
   }
 });
 

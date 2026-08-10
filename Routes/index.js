@@ -96,6 +96,9 @@ router.use('/resume', resumeCreation);
 // Search (internships/jobs/companies)
 router.use('/search', search);
 
+// Companies list (derived from internships + jobs)
+router.use('/companies', search);
+
 // Contact/Query form (forwards to admin email luckynagar1505@gmail.com)
 const contact = require('./contact');
 router.use('/contact', contact);

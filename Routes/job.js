@@ -27,34 +27,13 @@ router.post("/", async (req, res) => {
   }
 });
 
-const getMockJobs = () => [
-  {
-    _id: "mock-job-1",
-    title: "Demo Frontend Developer",
-    company: "Internarea",
-    location: "Remote",
-    Experience: "0-2 years",
-    category: "Software Development",
-    aboutCompany: "Demo company",
-    aboutJob: "Demo job description",
-    whoCanApply: "Students and freshers",
-    perks: ["Mentorship", "Flexible hours"],
-    AdditionalInfo: "This is mock data",
-    CTC: "₹4 LPA",
-    StartDate: "2026-01-01",
-  },
-];
-
 router.get("/", async (req, res) => {
   try {
-    const data = await Job.find().lean();
-    if (!data || data.length === 0) {
-      return res.status(200).json(getMockJobs());
-    }
-    return res.status(200).json(data);
+    const data = await Job.find().sort({ createdAt: -1 }).lean();
+    return res.status(200).json({ success: true, data });
   } catch (error) {
-    console.log("Job GET / failed, returning mock:", error?.message || error);
-    return res.status(200).json(getMockJobs());
+    console.log("Job GET / failed:", error?.message || error);
+    return res.status(500).json({ error: "internal server error" });
   }
 });
 

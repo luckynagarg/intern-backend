@@ -17,7 +17,7 @@ const { verifyFirebaseIdToken } = require("../middleware/authFirebase");
 const asyncHandler = require("../middleware/asyncHandler");
 
 // Standard HTTP error helpers.
-const { forbidden, badRequest } = require("../utils/httpErrors");
+const { forbidden, badRequest, notFound } = require("../utils/httpErrors");
 
 // Business logic: quota enforcement based on active subscription.
 const subscriptionService = require("../services/subscriptionService");
@@ -73,49 +73,50 @@ router.post("/", verifyFirebaseIdToken, asyncHandler(async (req, res) => {
 }));
 
 /**
- * List applications.
+ * List the authenticated user's own applications.
  *
- * NOTE: This route remains unprotected in the current codebase.
- * In a production system, this should be protected/authorized per user.
+ * Security: requires a valid Firebase token and only returns applications
+ * owned by the caller (userId from the verified token). This prevents IDOR /
+ * broken access control where any unauthenticated user could read all
+ * applications.
  */
-router.get("/", async (req, res) => {
-  try {
-    const data = await application.find();
-    return res.status(200).json(data);
-  } catch (error) {
-    console.log(error);
-    return res.status(404).json({ error: "internal server error" });
-  }
-});
+router.get("/", verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const userId = req.user.uid;
+  const data = await application.find({ userId }).sort({ createdAt: -1 }).lean();
+  return res.status(200).json({ success: true, data });
+}));
 
 /**
  * Fetch a single application by id.
+ *
+ * Security: only the owner (or an admin) may view an application. We verify
+ * ownership against the authenticated token to prevent IDOR.
  */
-router.get("/:id", async (req, res) => {
+router.get("/:id", verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  try {
-    const data = await application.findById(id);
+  const userId = req.user.uid;
 
-    if (!data) {
-      return res.status(404).json({ error: "application not found" });
-    }
+  const data = await application.findOne({ _id: id, userId }).lean();
 
-    return res.status(200).json(data);
-  } catch (error) {
-    console.log(error);
-    return res.status(404).json({ error: "internal server error" });
+  if (!data) {
+    throw notFound("application not found");
   }
-});
+
+  return res.status(200).json({ success: true, data });
+}));
 
 /**
- * Update application status.
+ * Update own application status.
+ *
+ * Security: only the owner may update their own application.
  *
  * Expected action values:
  * - accepted
  * - rejected
  */
-router.put("/:id", async (req, res) => {
+router.put("/:id", verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const userId = req.user.uid;
   const { action } = req.body;
 
   let status;
@@ -124,27 +125,21 @@ router.put("/:id", async (req, res) => {
   } else if (action === "rejected") {
     status = "rejected";
   } else {
-    return res.status(404).json({ error: "Invalid action" });
+    throw badRequest("Invalid action");
   }
 
-  try {
-    const updateapplication = await application.findByIdAndUpdate(
-      id,
-      { $set: { status } },
-      { new: true }
-    );
+  const updateapplication = await application.findOneAndUpdate(
+    { _id: id, userId },
+    { $set: { status } },
+    { new: true }
+  );
 
-    if (!updateapplication) {
-      return res
-        .status(404)
-        .json({ error: "Not able to update the application" });
-    }
-
-    return res.status(200).json({ sucess: true, data: updateapplication });
-  } catch (error) {
-    return res.status(500).json({ error: "internal server error" });
+  if (!updateapplication) {
+    throw notFound("application not found");
   }
-});
+
+  return res.status(200).json({ success: true, data: updateapplication });
+}));
 
 module.exports = router;
 
