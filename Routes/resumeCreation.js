@@ -15,7 +15,12 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { verifyFirebaseIdToken } = require('../middleware/authFirebase');
 
 const subscriptionService = require('../services/subscriptionService');
-const { createResumePurchase, verifyResumeOtp, markResumePaymentAndGenerate } = require('../services/resumeService');
+const {
+  createResumePurchase,
+  verifyResumeOtp,
+  markResumePaymentAndGenerate,
+} = require('../services/resumeService');
+
 const { getRazorpayInstance } = require('../services/razorpayService');
 const PaymentTransaction = require('../Model/PaymentTransaction');
 const Resume = require('../Model/Resume');
@@ -36,226 +41,232 @@ function isPremiumSubscription(planKey, status) {
   return normalizePlanKey(planKey) !== 'free';
 }
 
-router.post('/purchase/start', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const { resumeData, photoUrl } = req.body;
+router.post(
+  '/purchase/start',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const { resumeData, photoUrl } = req.body;
 
-  const userId = req.user.uid;
-  const email = req.user.email;
+    const userId = req.user.uid;
+    const email = req.user.email;
 
-  if (!email) throw badRequest('Email not found in authenticated user profile.');
+    if (!email) {
+      throw badRequest('Email not found in authenticated user profile.');
+    }
 
-  const sub = await subscriptionService.getActivePlanAndQuota(userId);
-  if (!isPremiumSubscription(sub.planKey, sub.subscriptionStatus)) {
-    throw forbidden('Resume creation is available only under the premium plan.');
-  }
+    const sub = await subscriptionService.getActivePlanAndQuota(userId);
 
-  const { resumeId, otpExpiresAt } = await createResumePurchase({
-    userId,
-    email,
-    resumeData,
-    photoUrl,
-  });
+    if (!isPremiumSubscription(sub.planKey, sub.subscriptionStatus)) {
+      throw forbidden(
+        'Resume creation is available only under the premium plan.'
+      );
+    }
 
-  return res.json({ success: true, data: { resumeId, otpExpiresAt } });
-}));
+    const { resumeId, otpExpiresAt } = await createResumePurchase({
+      userId,
+      email,
+      resumeData,
+      photoUrl,
+    });
 
-router.post('/purchase/otp/verify', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const { resumeId, otp } = req.body;
-  if (!resumeId || !otp) throw badRequest('resumeId and otp are required.');
+    return res.json({
+      success: true,
+      data: { resumeId, otpExpiresAt },
+    });
+  })
+);
 
-  const userId = req.user.uid;
-  const email = req.user.email;
+router.post(
+  '/purchase/otp/verify',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const { resumeId, otp } = req.body;
 
-  const result = await verifyResumeOtp({ userId, email, otp, resumeId });
-  return res.json({ success: true, data: result });
-}));
+    if (!resumeId || !otp) {
+      throw badRequest('resumeId and otp are required.');
+    }
 
-router.post('/purchase/razorpay/create-order', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const { resumeId } = req.body;
-  if (!resumeId) throw badRequest('resumeId is required.');
+    const userId = req.user.uid;
+    const email = req.user.email;
 
-  const resume = await Resume.findOne({ _id: resumeId, userId: req.user.uid });
-  if (!resume) throw notFound('Resume not found.');
-  if (resume.status !== 'otp_verified') {
-    throw forbidden('OTP verification required before payment.');
-  }
+    const result = await verifyResumeOtp({
+      userId,
+      email,
+      otp,
+      resumeId,
+    });
 
-  const amountPaise = RESUME_PRICE_INR * 100;
+    return res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
 
-  const razorpay = getRazorpayInstance();
-  const order = await razorpay.orders.create({
-    amount: amountPaise,
-    currency: RESUME_CURRENCY,
-    receipt: `resume_${req.user.uid}_${resumeId}_${Date.now()}`,
-    payment_capture: 1,
-  });
+router.post(
+  '/purchase/razorpay/create-order',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const { resumeId } = req.body;
 
-  const txn = await PaymentTransaction.create({
-    userId: req.user.uid,
-    planKey: 'resume',
-    amount: RESUME_PRICE_INR,
-    currency: RESUME_CURRENCY,
-    razorpayOrderId: order.id,
-    razorpayPaymentId: null,
-    razorpaySignature: null,
-    status: 'created',
-    invoiceNumber: null,
-  });
+    if (!resumeId) {
+      throw badRequest('resumeId is required.');
+    }
 
-  return res.json({
-    success: true,
-    data: {
-      orderId: order.id,
+    const resume = await Resume.findOne({
+      _id: resumeId,
+      userId: req.user.uid,
+    });
+
+    if (!resume) {
+      throw notFound('Resume not found.');
+    }
+
+    if (resume.status !== 'otp_verified') {
+      throw forbidden('OTP verification required before payment.');
+    }
+
+    const amountPaise = RESUME_PRICE_INR * 100;
+
+    const razorpay = getRazorpayInstance();
+
+    const order = await razorpay.orders.create({
+      amount: amountPaise,
+      currency: RESUME_CURRENCY,
+      receipt: `resume_${req.user.uid}_${resumeId}_${Date.now()}`,
+      payment_capture: 1,
+    });
+
+    const txn = await PaymentTransaction.create({
+      userId: req.user.uid,
+      planKey: 'resume',
       amount: RESUME_PRICE_INR,
       currency: RESUME_CURRENCY,
-      transactionId: txn._id,
+      razorpayOrderId: order.id,
+      razorpayPaymentId: null,
+      razorpaySignature: null,
+      status: 'created',
+      invoiceNumber: null,
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        orderId: order.id,
+        amount: RESUME_PRICE_INR,
+        currency: RESUME_CURRENCY,
+        transactionId: txn._id,
+        resumeId,
+      },
+    });
+  })
+);
+
+router.post(
+  '/purchase/razorpay/verify',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const {
       resumeId,
-    },
-  });
-}));
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+      planKey,
+    } = req.body;
 
-router.post('/purchase/razorpay/verify', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const { resumeId, razorpayOrderId, razorpayPaymentId, razorpaySignature, planKey } = req.body;
+    if (
+      !resumeId ||
+      !razorpayOrderId ||
+      !razorpayPaymentId ||
+      !razorpaySignature
+    ) {
+      throw badRequest(
+        'resumeId, razorpayOrderId, razorpayPaymentId, razorpaySignature are required.'
+      );
+    }
 
-  if (!resumeId || !razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
-    throw badRequest('resumeId, razorpayOrderId, razorpayPaymentId, razorpaySignature are required.');
-  }
+    const secret = process.env.RAZORPAY_KEY_SECRET;
 
-  const secret = process.env.RAZORPAY_KEY_SECRET;
-  if (!secret) throw new Error('Razorpay secret not configured.');
+    if (!secret) {
+      throw new Error('Razorpay secret not configured.');
+    }
 
-  const body = `${razorpayOrderId}|${razorpayPaymentId}`;
-  const expectedSignature = crypto.createHmac('sha256', secret).update(body).digest('hex');
+    const body = `${razorpayOrderId}|${razorpayPaymentId}`;
 
-  if (expectedSignature !== razorpaySignature) {
-    throw badRequest('Payment verification failed. Please try again.');
-  }
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(body)
+      .digest('hex');
 
-  const txn = await PaymentTransaction.findOne({ userId: req.user.uid, razorpayOrderId });
-  if (!txn) throw badRequest('Payment order not found.');
+    if (expectedSignature !== razorpaySignature) {
+      throw badRequest('Payment verification failed. Please try again.');
+    }
 
-  txn.status = 'verified';
-  txn.razorpayPaymentId = razorpayPaymentId;
-  txn.razorpaySignature = razorpaySignature;
-  txn.verifiedAt = new Date();
-  await txn.save();
+    const txn = await PaymentTransaction.findOne({
+      userId: req.user.uid,
+      razorpayOrderId,
+    });
 
-  const result = await markResumePaymentAndGenerate({
-    resumeId,
-    userId: req.user.uid,
-    razorpayPayload: { razorpayOrderId, razorpayPaymentId, razorpaySignature },
-    paymentMeta: { transactionId: txn._id },
-  });
+    if (!txn) {
+      throw badRequest('Payment order not found.');
+    }
 
-  return res.json({ success: true, data: result });
-}));
+    txn.status = 'verified';
+    txn.razorpayPaymentId = razorpayPaymentId;
+    txn.razorpaySignature = razorpaySignature;
+    txn.verifiedAt = new Date();
+
+    await txn.save();
+
+    const result = await markResumePaymentAndGenerate({
+      resumeId,
+      userId: req.user.uid,
+      razorpayPayload: {
+        razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature,
+      },
+      paymentMeta: {
+        transactionId: txn._id,
+      },
+    });
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
 
 // GET /api/resume/my-resumes — list the logged-in user's resumes.
-router.get('/my-resumes', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.uid;
-  if (!userId) return res.json({ success: true, data: [] });
+router.get(
+  '/my-resumes',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.uid;
 
-  const resumes = await Resume.find({ userId })
-    .sort({ createdAt: -1 })
-    .limit(50)
-    .lean();
+    if (!userId) {
+      return res.json({
+        success: true,
+        data: [],
+      });
+    }
 
-  res.json({ success: true, data: resumes });
-}));
+    const resumes = await Resume.find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
 
-// GET /api/resume/:id — fetch a single resume (owner or public).
-router.get('/:id', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.uid;
-  const { id } = req.params;
-
-  const resume = await Resume.findOne({ _id: id }).lean();
-  if (!resume) throw notFound('Resume not found.');
-
-  // Owner can always view; non-owner only if marked public.
-  if (resume.userId !== userId && resume.visibility !== 'public') {
-    throw forbidden('You do not have permission to view this resume.');
-  }
-
-  res.json({ success: true, data: resume });
-}));
-
-// DELETE /api/resume/:id — delete own resume.
-router.delete('/:id', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.uid;
-  const { id } = req.params;
-
-  const resume = await Resume.findOneAndDelete({ _id: id, userId });
-  if (!resume) throw notFound('Resume not found.');
-
-  res.json({ success: true, deleted: true });
-}));
-
-// POST /api/resume/:id/duplicate — duplicate own resume.
-router.post('/:id/duplicate', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.uid;
-  const { id } = req.params;
-
-  const source = await Resume.findOne({ _id: id, userId }).lean();
-  if (!source) throw notFound('Resume not found.');
-
-  const copy = await Resume.create({
-    userId,
-    resumeData: source.resumeData,
-    photoUrl: source.photoUrl || null,
-    resumePdfPath: source.resumePdfPath || null,
-    status: source.status,
-    payment: source.payment || {},
-    otpVerifiedAt: source.otpVerifiedAt || null,
-    visibility: 'private',
-  });
-
-  res.json({ success: true, data: copy });
-}));
-
-// PATCH /api/resume/:id — update own resume data / visibility.
-router.patch('/:id', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.uid;
-  const { id } = req.params;
-  const { resumeData, photoUrl, visibility } = req.body || {};
-
-  const resume = await Resume.findOne({ _id: id, userId });
-  if (!resume) throw notFound('Resume not found.');
-
-  if (resumeData && typeof resumeData === 'object') resume.resumeData = resumeData;
-  if (photoUrl !== undefined) resume.photoUrl = photoUrl;
-  if (visibility !== undefined) resume.visibility = visibility;
-
-  await resume.save();
-  res.json({ success: true, data: resume });
-}));
-
-// PATCH /api/resume/:id/visibility — toggle public/private.
-router.patch('/:id/visibility', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.uid;
-  const { id } = req.params;
-  const { visibility } = req.body || {};
-
-  if (!['public', 'private'].includes(visibility)) {
-    throw badRequest('visibility must be public or private.');
-  }
-
-  const resume = await Resume.findOneAndUpdate(
-    { _id: id, userId },
-    { $set: { visibility } },
-    { new: true }
-  ).lean();
-
-  if (!resume) throw notFound('Resume not found.');
-
-  res.json({ success: true, data: resume });
-}));
+    res.json({
+      success: true,
+      data: resumes,
+    });
+  })
+);
 
 // ---------------------------------------------------------------------------
 // Payment-first resume creation flow
 // ---------------------------------------------------------------------------
-// The user pays BEFORE seeing the resume form. These endpoints create + verify
-// a Razorpay order, grant a paid "resume entitlement", then the frontend saves
-// the form data and triggers PDF generation.
 
 const {
   createResumePaymentOrder,
@@ -265,81 +276,353 @@ const {
   generateResumeFromEntitlement,
 } = require('../services/resumeService');
 
-// POST /api/resume/payment/create-order — create a Razorpay order for a resume
-router.post('/payment/create-order', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user.uid;
-  const userEmail = req.user.email;
+// POST /api/resume/payment/create-order
+router.post(
+  '/payment/create-order',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user.uid;
+    const userEmail = req.user.email;
 
-  const data = await createResumePaymentOrder({ userId, userEmail });
-  return res.json({ success: true, data });
-}));
+    const data = await createResumePaymentOrder({
+      userId,
+      userEmail,
+    });
 
-// POST /api/resume/payment/verify — verify signature & create paid entitlement
-router.post('/payment/verify', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body || {};
-  if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
-    throw badRequest('razorpayOrderId, razorpayPaymentId and razorpaySignature are required.');
-  }
+    return res.json({
+      success: true,
+      data,
+    });
+  })
+);
 
-  const userId = req.user.uid;
-  const userEmail = req.user.email;
+// POST /api/resume/payment/verify
+router.post(
+  '/payment/verify',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const {
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    } = req.body || {};
 
-  const result = await verifyResumePaymentAndCreateEntitlement({
-    userId,
-    userEmail,
-    razorpayOrderId,
-    razorpayPaymentId,
-    razorpaySignature,
-  });
+    if (
+      !razorpayOrderId ||
+      !razorpayPaymentId ||
+      !razorpaySignature
+    ) {
+      throw badRequest(
+        'razorpayOrderId, razorpayPaymentId and razorpaySignature are required.'
+      );
+    }
 
-  return res.json({ success: true, data: result });
-}));
+    const userId = req.user.uid;
+    const userEmail = req.user.email;
 
-// GET /api/resume/create-access — check auth + paid entitlement (protects /resume/create)
-router.get('/create-access', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.uid;
-  const access = await getResumeCreateAccess(userId);
-  return res.json({ success: true, data: access });
-}));
+    const result = await verifyResumePaymentAndCreateEntitlement({
+      userId,
+      userEmail,
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    });
 
-// PATCH /api/resume/:id/resume-data — save form data into the paid entitlement
-router.patch('/:id/resume-data', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.uid;
-  const { id } = req.params;
-  const { resumeData, photoUrl } = req.body || {};
+    return res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
 
-  if (!resumeData || typeof resumeData !== 'object') {
-    throw badRequest('resumeData is required.');
-  }
+// IMPORTANT:
+// Keep /create-access BEFORE /:id.
+// Otherwise Express can treat "create-access" as the :id value.
+router.get(
+  '/create-access',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.uid;
 
-  const resume = await saveResumeData({ userId, resumeId: id, resumeData, photoUrl });
-  return res.json({ success: true, data: resume });
-}));
+    const access = await getResumeCreateAccess(userId);
 
-// POST /api/resume/:id/generate — generate PDF from saved form data
-router.post('/:id/generate', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.uid;
-  const { id } = req.params;
+    return res.json({
+      success: true,
+      data: access,
+    });
+  })
+);
 
-  const result = await generateResumeFromEntitlement({ userId, resumeId: id });
-  return res.json({ success: true, data: result });
-}));
+// GET /api/resume/:id — fetch a single resume
+router.get(
+  '/:id',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.uid;
+    const { id } = req.params;
 
-router.get('/resumes/:resumeId/download', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
+    const resume = await Resume.findOne({
+      _id: id,
+    }).lean();
 
-  const resume = await Resume.findOne({ _id: req.params.resumeId, userId: req.user.uid });
-  if (!resume) throw notFound('Resume not found.');
-  if (!resume.resumePdfPath) throw notFound('Resume PDF not generated yet.');
+    if (!resume) {
+      throw notFound('Resume not found.');
+    }
 
-  if (!fs.existsSync(resume.resumePdfPath)) throw notFound('Resume file not found on server.');
+    // Owner can always view; non-owner only if marked public.
+    if (
+      resume.userId !== userId &&
+      resume.visibility !== 'public'
+    ) {
+      throw forbidden(
+        'You do not have permission to view this resume.'
+      );
+    }
 
-  res.setHeader('Content-Type', 'application/octet-stream');
-  const fileName = `resume_${resume._id}`;
-  res.setHeader('Content-Disposition', `attachment; filename="${fileName}.pdf"`);
+    res.json({
+      success: true,
+      data: resume,
+    });
+  })
+);
 
-  return fs.createReadStream(resume.resumePdfPath).pipe(res);
-}));
+// DELETE /api/resume/:id — delete own resume.
+router.delete(
+  '/:id',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.uid;
+    const { id } = req.params;
+
+    const resume = await Resume.findOneAndDelete({
+      _id: id,
+      userId,
+    });
+
+    if (!resume) {
+      throw notFound('Resume not found.');
+    }
+
+    res.json({
+      success: true,
+      deleted: true,
+    });
+  })
+);
+
+// POST /api/resume/:id/duplicate — duplicate own resume.
+router.post(
+  '/:id/duplicate',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.uid;
+    const { id } = req.params;
+
+    const source = await Resume.findOne({
+      _id: id,
+      userId,
+    }).lean();
+
+    if (!source) {
+      throw notFound('Resume not found.');
+    }
+
+    const copy = await Resume.create({
+      userId,
+      resumeData: source.resumeData,
+      photoUrl: source.photoUrl || null,
+      resumePdfPath: source.resumePdfPath || null,
+      status: source.status,
+      payment: source.payment || {},
+      otpVerifiedAt: source.otpVerifiedAt || null,
+      visibility: 'private',
+    });
+
+    res.json({
+      success: true,
+      data: copy,
+    });
+  })
+);
+
+// PATCH /api/resume/:id — update own resume data / visibility.
+router.patch(
+  '/:id',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.uid;
+    const { id } = req.params;
+
+    const {
+      resumeData,
+      photoUrl,
+      visibility,
+    } = req.body || {};
+
+    const resume = await Resume.findOne({
+      _id: id,
+      userId,
+    });
+
+    if (!resume) {
+      throw notFound('Resume not found.');
+    }
+
+    if (
+      resumeData &&
+      typeof resumeData === 'object'
+    ) {
+      resume.resumeData = resumeData;
+    }
+
+    if (photoUrl !== undefined) {
+      resume.photoUrl = photoUrl;
+    }
+
+    if (visibility !== undefined) {
+      resume.visibility = visibility;
+    }
+
+    await resume.save();
+
+    res.json({
+      success: true,
+      data: resume,
+    });
+  })
+);
+
+// PATCH /api/resume/:id/visibility — toggle public/private.
+router.patch(
+  '/:id/visibility',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.uid;
+    const { id } = req.params;
+    const { visibility } = req.body || {};
+
+    if (!['public', 'private'].includes(visibility)) {
+      throw badRequest(
+        'visibility must be public or private.'
+      );
+    }
+
+    const resume = await Resume.findOneAndUpdate(
+      {
+        _id: id,
+        userId,
+      },
+      {
+        $set: {
+          visibility,
+        },
+      },
+      {
+        new: true,
+      }
+    ).lean();
+
+    if (!resume) {
+      throw notFound('Resume not found.');
+    }
+
+    res.json({
+      success: true,
+      data: resume,
+    });
+  })
+);
+
+// PATCH /api/resume/:id/resume-data — save form data
+router.patch(
+  '/:id/resume-data',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.uid;
+    const { id } = req.params;
+    const { resumeData, photoUrl } = req.body || {};
+
+    if (
+      !resumeData ||
+      typeof resumeData !== 'object'
+    ) {
+      throw badRequest('resumeData is required.');
+    }
+
+    const resume = await saveResumeData({
+      userId,
+      resumeId: id,
+      resumeData,
+      photoUrl,
+    });
+
+    return res.json({
+      success: true,
+      data: resume,
+    });
+  })
+);
+
+// POST /api/resume/:id/generate — generate PDF
+router.post(
+  '/:id/generate',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.uid;
+    const { id } = req.params;
+
+    const result = await generateResumeFromEntitlement({
+      userId,
+      resumeId: id,
+    });
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
+// GET /api/resume/resumes/:resumeId/download
+router.get(
+  '/resumes/:resumeId/download',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const fs = require('fs');
+
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user.uid,
+    });
+
+    if (!resume) {
+      throw notFound('Resume not found.');
+    }
+
+    if (!resume.resumePdfPath) {
+      throw notFound('Resume PDF not generated yet.');
+    }
+
+    if (!fs.existsSync(resume.resumePdfPath)) {
+      throw notFound('Resume file not found on server.');
+    }
+
+    res.setHeader(
+      'Content-Type',
+      'application/octet-stream'
+    );
+
+    const fileName = `resume_${resume._id}`;
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${fileName}.pdf"`
+    );
+
+    return fs
+      .createReadStream(resume.resumePdfPath)
+      .pipe(res);
+  })
+);
 
 module.exports = router;
