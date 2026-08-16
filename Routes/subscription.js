@@ -20,6 +20,10 @@ const { getQuotaOnly, getActivePlanAndQuota } = require('../services/subscriptio
 // Razorpay order creation and server-side verification.
 const { createRazorpayOrder, verifyPaymentAndActivate } = require('../services/razorpaySubscriptionService');
 
+// QR payment generation.
+const { createPaymentQr } = require('../services/qrService');
+const plans = require('../config/subscriptionPlans');
+
 // Standard HTTP error helpers (400/401/403/404/500).
 const { badRequest, forbidden, notFound, unauthorized } = require('../utils/httpErrors');
 
@@ -148,6 +152,41 @@ router.post('/razorpay/verify', verifyFirebaseIdToken, asyncHandler(async (req, 
   });
 
   return res.json({ success: true, data: result });
+}));
+
+// -------------------------------
+// Payment status by order ID
+// -------------------------------
+router.get('/payments/:orderId', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const PaymentTransaction = require('../Model/PaymentTransaction');
+  const userId = req.user.uid;
+  const txn = await PaymentTransaction.findOne({ userId, razorpayOrderId: req.params.orderId }).lean();
+  if (!txn) throw notFound('Payment not found.');
+  res.json({ success: true, data: txn });
+}));
+
+// -------------------------------
+// QR payment generation
+// -------------------------------
+router.post('/qr', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const { planKey } = req.body || {};
+  if (!planKey) throw badRequest('planKey is required.');
+
+  const key = String(planKey).toLowerCase();
+  const plan = plans[key];
+  if (!plan) throw badRequest('Invalid subscription plan.');
+  if (plan.priceINR <= 0) throw badRequest('QR payment is only available for paid plans.');
+
+  const qr = await createPaymentQr({
+    amountPaise: Math.round(plan.priceINR * 100),
+    currency: 'INR',
+    description: `${plan.name} Subscription`,
+    reference: `sub_${req.user.uid}_${Date.now()}`,
+    userId: req.user.uid,
+    planKey: plan.planKey,
+  });
+
+  res.json({ success: true, data: { ...qr, planKey: plan.planKey, planName: plan.name, amount: plan.priceINR } });
 }));
 
 module.exports = router;
