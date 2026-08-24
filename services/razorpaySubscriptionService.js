@@ -65,15 +65,36 @@ async function createRazorpayOrder({ userId, planKey, userEmail, userName }) {
 }
 
 async function verifyPaymentAndActivate({ userId, planKey, razorpayOrderId, razorpayPaymentId, razorpaySignature, userEmail, userName }) {
-  const txn = await PaymentTransaction.findOne({ userId, razorpayOrderId });
-  if (!txn) {
-    const err = new Error('Payment order not found.');
-    err.statusCode = 404;
-    throw err;
-  }
+  // Atomic claim: only one concurrent request may proceed per 'created' txn.
+  // This prevents duplicate subscription activation / duplicate invoices when a
+  // user double-submits the frontend verify call.
+  let txn = await PaymentTransaction.findOneAndUpdate(
+    { userId, razorpayOrderId, status: 'created' },
+    { $set: { status: 'processing' } },
+    { new: true }
+  );
 
-  if (txn.status === 'verified') {
-    return { alreadyActivated: true };
+  if (!txn) {
+    // No 'created' txn left — either already verified/failed, or another
+    // concurrent request holds the claim. Resolve state for an accurate response.
+    txn = await PaymentTransaction.findOne({ userId, razorpayOrderId });
+    if (!txn) {
+      const err = new Error('Payment order not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (txn.status === 'verified') {
+      return { alreadyActivated: true };
+    }
+    if (txn.status === 'failed') {
+      const err = new Error('Payment verification failed. Please try again.');
+      err.statusCode = 400;
+      throw err;
+    }
+    // 'processing' held by a concurrent duplicate request.
+    const err = new Error('Payment is being processed. Please wait a moment.');
+    err.statusCode = 409;
+    throw err;
   }
 
   // Enforce the payment time window server-side (10:00–11:00 AM IST by default).

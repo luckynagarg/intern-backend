@@ -46,6 +46,19 @@ router.post("/posts", verifyFirebaseIdToken, async (req, res) => {
     if (!mediaUrl || !mediaType)
       return res.status(400).json({ error: "mediaUrl and mediaType required" });
 
+    // Server-side content validation: restrict media type and require a real
+    // http(s) URL so the feed can't be abused as a free-form script/URL sink.
+    const ALLOWED_MEDIA_TYPES = ["image", "video"];
+    if (!ALLOWED_MEDIA_TYPES.includes(mediaType)) {
+      return res.status(400).json({ error: "mediaType must be image or video." });
+    }
+    if (typeof mediaUrl !== "string" || !/^https?:\/\/[^\s]+$/i.test(mediaUrl)) {
+      return res.status(400).json({ error: "mediaUrl must be a valid http(s) URL." });
+    }
+    if (caption && typeof caption === "string" && caption.length > 5000) {
+      return res.status(400).json({ error: "caption is too long." });
+    }
+
     const friendsCount = await Friendship.countDocuments({
       userId,
       status: "accepted",
