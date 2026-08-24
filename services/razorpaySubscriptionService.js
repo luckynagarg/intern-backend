@@ -4,7 +4,6 @@ const PaymentTransaction = require('../Model/PaymentTransaction');
 const Subscription = require('../Model/Subscription');
 const Invoice = require('../Model/Invoice');
 const plans = require('../config/subscriptionPlans');
-const { isWithinPaymentWindowIST } = require('../utils/ist');
 const { generateInvoicePdf } = require('./invoicePdfService');
 const { buildInvoiceEmailHtml } = require('./emailTemplates');
 const { sendInvoiceEmail } = require('./emailService');
@@ -22,15 +21,6 @@ function calcSubscriptionPeriod30Days() {
 async function createRazorpayOrder({ userId, planKey, userEmail, userName }) {
   const key = normalizePlanKey(planKey);
   const plan = plans[key] || plans.free;
-
-  // Enforce payment window entirely on backend for paid plans.
-  if (plan.priceINR > 0) {
-    if (!isWithinPaymentWindowIST(new Date())) {
-      const err = new Error('Payments are only accepted between 10:00 AM and 11:00 AM IST.');
-      err.statusCode = 403;
-      throw err;
-    }
-  }
 
   if (plan.priceINR === 0) {
     // Free plan assignment is handled by subscription service; no Razorpay order.
@@ -66,33 +56,15 @@ async function createRazorpayOrder({ userId, planKey, userEmail, userName }) {
     orderId: order.id,
     amount: plan.priceINR,
     currency,
-    planKey: plan.planKey,
+     planKey: plan.planKey,
     // allow frontend to render
     subscriptionName: plan.name,
     transactionId: txn._id,
+    keyId: process.env.RAZORPAY_KEY_ID || '',
   };
 }
 
 async function verifyPaymentAndActivate({ userId, planKey, razorpayOrderId, razorpayPaymentId, razorpaySignature, userEmail, userName }) {
-  // Enforce payment window again here as a final source-of-truth check.
-  // A user could theoretically call verify outside the allowed window.
-  // Subscription activation must never happen outside 10:00–11:00 IST.
-  const now = new Date();
-  if (!isWithinPaymentWindowIST(now)) {
-    const err = new Error('Payments are only accepted between 10:00 AM and 11:00 AM IST.');
-    err.statusCode = 403;
-    throw err;
-  }
-
-  const key = normalizePlanKey(planKey);
-  const plan = plans[key];
-  if (!plan) {
-    const err = new Error('Invalid subscription plan.');
-    err.statusCode = 400;
-    throw err;
-  }
-
-
   const txn = await PaymentTransaction.findOne({ userId, razorpayOrderId });
   if (!txn) {
     const err = new Error('Payment order not found.');
@@ -102,6 +74,26 @@ async function verifyPaymentAndActivate({ userId, planKey, razorpayOrderId, razo
 
   if (txn.status === 'verified') {
     return { alreadyActivated: true };
+  }
+
+  // Use the planKey stored in the transaction as the source of truth,
+  // not the frontend-supplied planKey. This prevents plan tampering.
+   const storedPlanKey = txn.planKey || planKey;
+  const plan = plans[normalizePlanKey(storedPlanKey)];
+  if (!plan) {
+    const err = new Error('Invalid subscription plan on transaction.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Defense-in-depth: verify the transaction amount matches the plan price.
+  if (txn.amount !== plan.priceINR) {
+    txn.status = 'failed';
+    txn.failureReason = `Amount mismatch: expected ${plan.priceINR}, got ${txn.amount}.`;
+    await txn.save();
+    const err = new Error('Payment amount does not match plan.');
+    err.statusCode = 400;
+    throw err;
   }
 
   const secret = (() => {

@@ -28,7 +28,7 @@ function generateResumeData() {
         'Manipal Institute of Technology',
       ]),
       startYear: String(randInt(2018, 2022)),
-      endYear: String(randInt(2021, 2025)),
+      endYear: String(randInt(2021, 2026)),
       score: `${randInt(7, 10)}.${randInt(0, 9)} CGPA`
     }
   ];

@@ -5,7 +5,6 @@ const Subscription = require('../Model/Subscription');
 const Invoice = require('../Model/Invoice');
 
 const plans = require('../config/subscriptionPlans');
-const { isWithinPaymentWindowIST } = require('../utils/ist');
 
 const { generateInvoicePdf } = require('./invoicePdfService');
 const emailService = require('./emailService');
@@ -41,15 +40,6 @@ function requireEnv(name) {
 
 async function createRazorpayOrder({ userId, planKey, userEmail, userName }) {
   const plan = getPlanOrThrow(planKey);
-
-  // Enforce backend payment window for paid plans.
-  if (plan.priceINR > 0) {
-    if (!isWithinPaymentWindowIST(new Date())) {
-      const err = new Error('Payments are only accepted between 10:00 AM and 11:00 AM IST.');
-      err.statusCode = 403;
-      throw err;
-    }
-  }
 
   // Free plan: no order/payment.
   if (plan.priceINR === 0) {
@@ -115,21 +105,11 @@ async function createRazorpayOrder({ userId, planKey, userEmail, userName }) {
     planKey: plan.planKey,
     subscriptionName: plan.name,
     transactionId: txn._id,
+    keyId: process.env.RAZORPAY_KEY_ID || '',
   };
 }
 
 async function verifyAndActivate({ userId, planKey, razorpayOrderId, razorpayPaymentId, razorpaySignature, userEmail, userName }) {
-  const plan = getPlanOrThrow(planKey);
-
-  // Enforce backend payment window again.
-  if (plan.priceINR > 0) {
-    if (!isWithinPaymentWindowIST(new Date())) {
-      const err = new Error('Payments are only accepted between 10:00 AM and 11:00 AM IST.');
-      err.statusCode = 403;
-      throw err;
-    }
-  }
-
   // Idempotency: if payment already verified for this user/order, return.
   const existing = await PaymentTransaction.findOne({ userId, razorpayOrderId, status: 'verified' });
   if (existing && existing.razorpayPaymentId === razorpayPaymentId) {
@@ -141,6 +121,30 @@ async function verifyAndActivate({ userId, planKey, razorpayOrderId, razorpayPay
         razorpayPaymentId,
       },
     };
+  }
+
+  // Look up the transaction to get the plan stored at order-creation time.
+  // The frontend-supplied planKey is NOT trusted for activation decisions.
+  const txn = await PaymentTransaction.findOne({ userId, razorpayOrderId });
+  if (!txn) {
+    const err = new Error('Payment order not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Use the planKey stored in the transaction as the source of truth.
+  const storedPlanKey = txn.planKey || planKey;
+  const plan = getPlanOrThrow(storedPlanKey);
+
+  // Defense-in-depth: verify the transaction amount matches the plan price.
+  if (txn.amount !== plan.priceINR) {
+    await PaymentTransaction.updateOne(
+      { _id: txn._id },
+      { $set: { status: 'failed', failureReason: `Amount mismatch: expected ${plan.priceINR}, got ${txn.amount}.` } }
+    );
+    const err = new Error('Payment amount does not match plan.');
+    err.statusCode = 400;
+    throw err;
   }
 
   // Signature verification: SHA256 HMAC of orderId|paymentId using Razorpay key secret.
