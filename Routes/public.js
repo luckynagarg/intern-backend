@@ -324,9 +324,9 @@ router.get("/posts/:postId/stats", async (req, res) => {
         // We build a fake handler that only sets req.user on success.
         const next = () => {};
         // Simpler: decode token directly via admin.
-        const { getAdminOrThrow } = require("../config/firebaseAdmin");
-        const admin = getAdminOrThrow();
-        const decoded = await admin.auth().verifyIdToken(token);
+        const { getAuthOrThrow } = require("../config/firebaseAdmin");
+        const authService = getAuthOrThrow();
+        const decoded = await authService.verifyIdToken(token);
         if (decoded && decoded.uid) {
           likedByMe = (await PostLike.findOne({ postId, userId: decoded.uid }))
             ? true
@@ -365,7 +365,12 @@ router.get("/friends/count", verifyFirebaseIdToken, async (req, res) => {
 });
 
 // Auth-protected testing/seed endpoint: create an accepted friendship.
+// DEV ONLY — disabled in production because it lets any authenticated user forge
+// accepted friendships (with any friendId) and bypass the friend-based posting limits.
 router.post("/friends/seed", verifyFirebaseIdToken, async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: "Not found." });
+  }
   try {
     const userId = req.user.uid;
     const { friendId } = req.body;

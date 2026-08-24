@@ -250,7 +250,25 @@ function getAdminOrThrow() {
   }
 }
 
+/**
+ * Return the Firebase Auth service (firebase-admin v14+ API).
+ *
+ * From firebase-admin v14 the legacy `admin.auth()` on the App object is no
+ * longer available. All callers must use the dedicated `getAuth()` helper from
+ * "firebase-admin/auth" instead.
+ *
+ * This ensures the default app is initialized exactly once before returning the
+ * Auth service, so it is safe to call from any route/service.
+ */
+function getAuthOrThrow() {
+  getAdminOrThrow();
+  // Import lazily so we never require the auth subpackage at module load time.
+  const { getAuth } = require("firebase-admin/auth");
+  return getAuth();
+}
+
 module.exports = {
   initFirebaseAdmin,
   getAdminOrThrow,
+  getAuthOrThrow,
 };

@@ -19,7 +19,10 @@ const { sendOtpEmail, sendOtpSms } = require("../services/otpEmailService");
 
 const OTP_DEBUG_OVERRIDE = process.env.OTP_DEBUG_OVERRIDE === "true";
 
-const { admin } = require("../config/firebaseAdmin");
+const { getAuthOrThrow } = require("../config/firebaseAdmin");
+// Legacy v12-style compatibility shim: firebase-admin v14 removed `admin.auth()`.
+// Keep call sites using `admin.auth()` working by mapping it to the v14 `getAuth()`.
+const admin = { auth: () => getAuthOrThrow() };
 
 
 /**

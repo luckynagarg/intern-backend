@@ -15,7 +15,7 @@ const router = express.Router();
 const asyncHandler = require('../middleware/asyncHandler');
 const { verifyFirebaseIdToken } = require('../middleware/authFirebase');
 const { badRequest, forbidden } = require('../utils/httpErrors');
-const { admin } = require('../config/firebaseAdmin');
+const { getAuthOrThrow } = require('../config/firebaseAdmin');
 
 /**
  * POST /api/email-verification/send
@@ -36,7 +36,7 @@ router.post(
     }
 
     // Get the Firebase user record
-    const userRecord = await admin.auth().getUser(userId);
+    const userRecord = await getAuthOrThrow().getUser(userId);
 
     // Check if already verified
     if (userRecord.emailVerified) {
@@ -53,8 +53,7 @@ router.post(
       handleCodeInApp: true,
     };
 
-    const verificationLink = await admin
-      .auth()
+    const verificationLink = await getAuthOrThrow()
       .generateEmailVerificationLink(userEmail, actionCodeSettings);
 
     // Send verification email using existing email infrastructure
@@ -95,7 +94,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const userId = req.user.uid;
 
-    const userRecord = await admin.auth().getUser(userId);
+    const userRecord = await getAuthOrThrow().getUser(userId);
 
     return res.status(200).json({
       success: true,
@@ -119,7 +118,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const userId = req.user.uid;
 
-    const userRecord = await admin.auth().getUser(userId);
+    const userRecord = await getAuthOrThrow().getUser(userId);
     const providerIds = (userRecord.providerData || []).map((p) => p.providerId);
     const isGoogleUser = providerIds.includes('google.com');
     const emailVerified = userRecord.emailVerified || isGoogleUser;

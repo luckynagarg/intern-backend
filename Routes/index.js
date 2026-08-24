@@ -15,7 +15,12 @@ const application = require("./application.js");
 const publicRoutes = require("./public");
 const debugSeed = require('./debugSeed');
 
-router.use('/debug', debugSeed);
+// Debug/seed router — DEV ONLY. Never expose seeding capabilities in production:
+// an unauthenticated attacker could forge friendships, posts, likes and bypass
+// the friend-based posting limits.
+if (process.env.NODE_ENV !== 'production') {
+  router.use('/debug', debugSeed);
+}
 const subscription = require("./subscription");
 const passwordRecovery = require("./passwordRecovery");
 const login = require("./login");

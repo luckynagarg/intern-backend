@@ -146,7 +146,7 @@ router.get(
       ],
       firebaseUid: { $ne: caller },
     })
-      .select('firebaseUid name username nickname bio photo profilePhoto coverPhoto headline location friendCount createdAt')
+      .select('firebaseUid name username nickname bio photo profilePhoto coverPhoto headline location college company skills friendCount createdAt')
       .limit(limit)
       .lean();
 
@@ -159,22 +159,25 @@ router.get(
           ? 'friends'
           : await getRelationship(caller, uid);
         const mutual = await getMutualCount(caller, uid);
-        return {
-          _id: uid,
-          uid,
-          name: u.name || null,
-          username: u.username || null,
-          nickname: u.nickname || null,
-          bio: u.bio || null,
-          photo: u.photo || u.profilePhoto || null,
-          coverPhoto: u.coverPhoto || null,
-          headline: u.headline || null,
-          location: u.location || null,
-          friendCount: u.friendCount || 0,
-          mutualFriends: mutual,
-          relationship, // 'none' | 'request_sent' | 'request_received' | 'friends'
-          joined: u.createdAt ?? null,
-        };
+      return {
+        _id: uid,
+        uid,
+        name: u.name || null,
+        username: u.username || null,
+        nickname: u.nickname || null,
+        bio: u.bio || null,
+        photo: u.photo || u.profilePhoto || null,
+        coverPhoto: u.coverPhoto || null,
+        headline: u.headline || null,
+        location: u.location || null,
+        college: u.college || null,
+        company: u.company || null,
+        skills: Array.isArray(u.skills) ? u.skills : [],
+        friendCount: u.friendCount || 0,
+        mutualFriends: mutual,
+        relationship, // 'none' | 'request_sent' | 'request_received' | 'friends'
+        joined: u.createdAt ?? null,
+      };
       })
     );
 
@@ -209,7 +212,7 @@ router.get(
     const exclude = new Set([caller, ...callerFriendIds, ...requestUids]);
 
     const suggestions = await UserProfile.find({ firebaseUid: { $nin: [...exclude] } })
-      .select('firebaseUid name username nickname bio photo profilePhoto headline location friendCount createdAt')
+      .select('firebaseUid name username nickname bio photo profilePhoto headline location college company skills friendCount createdAt')
       .sort({ friendCount: -1, createdAt: -1 })
       .limit(limit)
       .lean();
@@ -227,6 +230,9 @@ router.get(
           photo: u.photo || u.profilePhoto || null,
           headline: u.headline || null,
           location: u.location || null,
+          college: u.college || null,
+          company: u.company || null,
+          skills: Array.isArray(u.skills) ? u.skills : [],
           friendCount: u.friendCount || 0,
           mutualFriends: await getMutualCount(caller, uid),
           relationship: 'none',

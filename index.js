@@ -172,9 +172,9 @@ app.use((req, res, next) => {
 const { rawBodyMiddleware } = require('./middleware/rawBody');
 app.post('/api/subscriptions/webhook', rawBodyMiddleware);
 
-// Body parsing
-app.use(bodyParser.json({ limit: "50mb" }));
-app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
+// Body parsing — hard cap the payload size to limit abuse / DoS via oversized bodies.
+app.use(bodyParser.json({ limit: "10mb" }));
+app.use(bodyParser.urlencoded({ extended: true, limit: "10mb" }));
 
 
 const buildRateLimiter = require("./middleware/rateLimit");
@@ -189,24 +189,28 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, routes: ["/api/job", "/api/internship"] });
 });
 
-// Diagnostic endpoint for deployed route mounting
-app.get("/api/routes", (req, res) => {
-  res.json({
-    ok: true,
-    environment,
-    mounted: {
-      "GET /api/job": "handled",
-      "POST /api/job": "handled",
-      "GET /api/job/:id": "handled",
-      "GET /api/internship": "handled",
-      "POST /api/internship": "handled",
-      "GET /api/internship/:id": "handled",
-      "GET /api/application": "handled",
-      "POST /api/application": "handled",
-      "GET /api/public": "handled",
-    },
+// Diagnostic endpoint for deployed route mounting.
+// Disabled in production: it leaks the deployment environment and internal route
+// table to anyone. Ops can rely on the health endpoint instead.
+if (process.env.NODE_ENV !== 'production') {
+  app.get("/api/routes", (req, res) => {
+    res.json({
+      ok: true,
+      environment,
+      mounted: {
+        "GET /api/job": "handled",
+        "POST /api/job": "handled",
+        "GET /api/job/:id": "handled",
+        "GET /api/internship": "handled",
+        "POST /api/internship": "handled",
+        "GET /api/internship/:id": "handled",
+        "GET /api/application": "handled",
+        "POST /api/application": "handled",
+        "GET /api/public": "handled",
+      },
+    });
   });
-});
+}
 
 app.use("/api", router);
 

@@ -123,6 +123,14 @@ async function verifyAndActivate({ userId, planKey, razorpayOrderId, razorpayPay
     };
   }
 
+  // Enforce the payment time window server-side (10:00–11:00 AM IST by default).
+  const { isPaymentTimeAllowedNow } = require('../config/paymentWindow');
+  if (!isPaymentTimeAllowedNow()) {
+    const err = new Error('Payments are only accepted between 10:00 AM and 11:00 AM IST.');
+    err.statusCode = 403;
+    throw err;
+  }
+
   // Look up the transaction to get the plan stored at order-creation time.
   // The frontend-supplied planKey is NOT trusted for activation decisions.
   const txn = await PaymentTransaction.findOne({ userId, razorpayOrderId });

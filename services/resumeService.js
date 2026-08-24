@@ -294,6 +294,14 @@ async function verifyResumePaymentAndCreateEntitlement({ userId, userEmail, razo
     }
   }
 
+  // 2b. Enforce the payment time window server-side (10:00–11:00 AM IST by default).
+  const { isPaymentTimeAllowedNow } = require('../config/paymentWindow');
+  if (!isPaymentTimeAllowedNow()) {
+    const err = new Error('Resume payment is only accepted between 10:00 AM and 11:00 AM IST.');
+    err.statusCode = 403;
+    throw err;
+  }
+
   // 3. Verify signature using the server secret.
   const secret = process.env.RAZORPAY_KEY_SECRET;
   if (!secret) throw internalServerError('RAZORPAY_KEY_SECRET is not set.');

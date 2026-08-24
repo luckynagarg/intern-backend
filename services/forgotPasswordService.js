@@ -19,7 +19,7 @@
 
 const crypto = require('crypto');
 
-const { getAdminOrThrow } = require('../config/firebaseAdmin');
+const { getAdminOrThrow, getAuthOrThrow } = require('../config/firebaseAdmin');
 const UserProfile = require('../Model/UserProfile');
 const { badRequest, internalServerError } = require('../utils/httpErrors');
 
@@ -118,19 +118,20 @@ async function resetPassword({ method, identifier }) {
   if (!normalized) throw badRequest('A valid email or phone number is required.');
 
 // Resolve the Firebase user by the identifier.
-  const admin = getAdminOrThrow();
+  // Use the v14-compatible Auth service (legacy `admin.auth()` is gone in v14).
+  const auth = getAuthOrThrow();
   let user = null;
   try {
     if (method === 'email') {
       try {
-        user = await admin.auth().getUserByEmail(normalized);
+        user = await auth.getUserByEmail(normalized);
       } catch (e) {
         // No such user -> user stays null (generic response below).
         user = null;
       }
     } else {
       try {
-        user = await admin.auth().getUserByPhoneNumber(normalized);
+        user = await auth.getUserByPhoneNumber(normalized);
       } catch (e) {
         user = null;
       }
@@ -181,7 +182,7 @@ async function resetPassword({ method, identifier }) {
 
   // Generate a letters-only password and apply it via Firebase Admin.
   const newPassword = generateLettersOnlyPassword();
-  await admin.auth().updateUser(uid, { password: newPassword });
+  await getAuthOrThrow().updateUser(uid, { password: newPassword });
 
   // Record the request to enforce the daily limit.
   await recordResetRequest(uid);
