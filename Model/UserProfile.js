@@ -12,9 +12,16 @@ const UserProfileSchema = new mongoose.Schema(
       unique: true,
     },
 
+    // NOTE: username / nickname are OPTIONAL. They must NOT have
+    // `default: null` — an explicit null value IS included in a sparse
+    // index (sparse only omits docs where the field is MISSING), which
+    // caused E11000 duplicate-key errors when multiple users had no
+    // username yet. The field is simply left ABSENT until set.
+    //
+    // Uniqueness is enforced via PARTIAL unique indexes (see bottom of
+    // this file) that only apply when the field is a non-empty string.
 username: {
       type: String,
-      default: null,
       unique: true,
       sparse: true,
       trim: true,
@@ -24,7 +31,6 @@ username: {
     // Public nickname (@username style). Unique, validated 4-20 chars.
     nickname: {
       type: String,
-      default: null,
       unique: true,
       sparse: true,
       trim: true,
@@ -32,7 +38,6 @@ username: {
     // Lowercased copy of nickname for case-insensitive unique + search.
     lowercaseNickname: {
       type: String,
-      default: null,
       unique: true,
       sparse: true,
       trim: true,
@@ -106,9 +111,32 @@ username: {
   }
 );
 
-// firebaseUid and username declare `unique: true` in the field definition,
-// which already creates the unique indexes. Declaring schema.index() here as
-// well caused duplicate-index warnings from Mongoose, so they were removed.
+// firebaseUid declares `unique: true` in the field definition, which
+// creates its unique index. For the optional username/nickname fields we
+// use PARTIAL unique indexes: they only apply when the field is an actual
+// non-empty string, so any number of users without a username can coexist
+// (fixes E11000 "dup key: { username: null }").
+UserProfileSchema.index(
+  { username: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { username: { $type: 'string' } },
+  }
+);
+UserProfileSchema.index(
+  { nickname: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { nickname: { $type: 'string' } },
+  }
+);
+UserProfileSchema.index(
+  { lowercaseNickname: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { lowercaseNickname: { $type: 'string' } },
+  }
+);
 
 UserProfileSchema.pre('save', function (next) {
   this.updatedAt = new Date();

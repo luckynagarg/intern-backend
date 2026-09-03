@@ -25,7 +25,8 @@ async function ensureProfiles(uids) {
   await UserProfile.insertMany(
     missing.map((firebaseUid) => ({
       firebaseUid,
-      username: null,
+      // NOTE: username/nickname are optional and intentionally left ABSENT
+      // (never null) — writing null collides on the unique partial indexes.
       name: null,
       email: null,
       photo: null,

@@ -210,7 +210,7 @@ router.get(
           firebaseUid: caller,
           name: req.user?.name || null,
           email: req.user?.email || null,
-          username: null,
+          // username/nickname left absent (optional) — never write null.
           headline: null,
           bio: null,
           location: null,

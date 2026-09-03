@@ -226,12 +226,16 @@ async function sendEmail({
         provider: 'resend',
       };
     } catch (err) {
-      console.warn(
-        '[email] Resend failed, trying Gmail SMTP fallback',
-        {
-          error: err.message,
-        }
-      );
+      const msg = String(err?.message || err || '');
+      // Resend restriction: test keys can only send to the account owner's
+      // email until a domain is verified at https://resend.com/domains.
+      const hint = /testing emails|verify a domain/i.test(msg)
+        ? 'Resend is in TEST MODE — it can only deliver to your own account email. Verify a domain at resend.com/domains and set EMAIL_FROM to an address on that domain to enable all recipients. Falling back to Gmail SMTP.'
+        : 'Resend failed, trying Gmail SMTP fallback.';
+      console.warn('[email] ' + hint, {
+        error: msg,
+        provider: 'resend',
+      });
     }
   } else {
     console.warn(

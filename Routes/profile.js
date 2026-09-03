@@ -117,50 +117,74 @@ router.post(
       const email = safeString(req.user?.email ?? null);
       const photo = safeString(req.body?.photo ?? null);
 
-      const existing = await UserProfile.findOne({ firebaseUid: uid }).lean();
+      // ------------------------------------------------------------------
+      // Idempotent + concurrency-safe upsert.
+      //
+      // Keyed on firebaseUid (the authenticated user id) — NEVER username.
+      // $setOnInsert only applies on creation, so repeating the call
+      // returns/updates the SAME document instead of inserting again.
+      // upsert is atomic in MongoDB, so two simultaneous bootstrap
+      // requests cannot create two profiles (one wins, the other updates).
+      //
+      // NOTE: username / nickname are deliberately NOT set here — they are
+      // optional and left absent until the user chooses one. Writing
+      // `username: null` used to collide on the unique username index
+      // (E11000 dup key: { username: null }).
+      // ------------------------------------------------------------------
+      const now = new Date();
 
-      if (existing) {
-        const patch = {};
-        if (name && !existing.name) patch.name = name;
-        if (email && !existing.email) patch.email = email;
-        if (photo && !existing.photo) patch.photo = photo;
+      const setOnInsert = {
+        firebaseUid: uid,
+        privacy: 'public',
+        skills: [],
+        socialLinks: {},
+        friends: [],
+        friendCount: 0,
+        verifiedLanguages: [],
+        createdAt: now,
+      };
+      if (name) setOnInsert.name = name;
+      if (email) setOnInsert.email = email;
+      if (photo) setOnInsert.photo = photo;
 
-        if (Object.keys(patch).length) {
-          await UserProfile.updateOne(
-            { firebaseUid: uid },
-            { $set: { ...patch, updatedAt: new Date() } }
-          );
+      const set = { updatedAt: now };
+      // Note: name/email/photo are intentionally NOT in $set — repeat calls
+      // must not overwrite values the user may have edited. They are only
+      // seeded once via $setOnInsert above.
+
+      let doc;
+      try {
+        doc = await UserProfile.findOneAndUpdate(
+          { firebaseUid: uid },
+          { $setOnInsert: setOnInsert, $set: set },
+          { upsert: true, new: true, setDefaultsOnInsert: true, lean: true }
+        );
+      } catch (err) {
+        // Rare race: concurrent upsert hit the firebaseUid unique index.
+        // The profile now exists — just fetch it (never 500 to the client).
+        if (err && err.code === 11000) {
+          console.warn('[profile/bootstrap] upsert race hit unique key, fetching existing profile', {
+            userId: uid,
+          });
+          doc = await UserProfile.findOne({ firebaseUid: uid }).lean();
         }
+        if (!doc) throw err;
+      }
 
-        const updated = await UserProfile.findOne({ firebaseUid: uid }).lean();
-        return res.status(200).json({
-          success: true,
-          message: 'Profile ready',
-          data: updated || existing,
+      if (!doc) {
+        // Should not happen, but never leave the client with an unexplained 500.
+        return res.status(500).json({
+          success: false,
+          message: 'Could not load profile after bootstrap. Please retry.',
+          error: { message: 'Profile not found after upsert' },
           ...logBase(),
         });
       }
 
-      const created = await UserProfile.create({
-        firebaseUid: uid,
-        name: name || null,
-        email: email || null,
-        photo: photo || null,
-        username: null,
-        headline: null,
-        bio: null,
-        location: null,
-        skills: [],
-        college: null,
-        company: null,
-        socialLinks: {},
-        privacy: 'public',
-      });
-
       return res.status(200).json({
         success: true,
-        message: 'Profile created',
-        data: created?.toObject?.() ?? created,
+        message: 'Profile ready',
+        data: doc,
         ...logBase(),
       });
     } catch (err) {
