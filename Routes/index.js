@@ -36,10 +36,12 @@ const { requireAdminAccess } = require("../middleware/adminSession");
 // /api/admin/adminlogin remains unprotected (login gate). All other admin
 // routes accept EITHER a server-signed admin session token (username/password
 // login) OR a Firebase ID token with the admin custom claim.
+// Chain: auth gate → admin router → login-history router → export router.
 router.use("/admin", (req, res, next) => {
-  if (req.path === "/adminlogin") return admin(req, res, next);
+  if (req.path === "/adminlogin") return next();
   return requireAdminAccess(req, res, next);
 });
+router.use("/admin", admin);
 
 // Job & internship CRUD
 router.use("/internship", intern);
@@ -54,6 +56,10 @@ const friends = require("./friends");
 const notifications = require("./notifications");
 router.use("/friends", friends);
 router.use("/notifications", notifications);
+
+// Private messaging (1-to-1 conversations + messages)
+const messages = require("./messages");
+router.use("/messages", messages);
 
 
 // Public/community endpoints
@@ -91,7 +97,7 @@ const emailOtpAuth = require('./emailOtpAuth');
 router.use('/email-otp-auth', emailOtpAuth);
 
 
-// Admin security endpoints
+// Admin security endpoints (auth already applied by /admin chain above).
 const adminLoginHistory = require('./adminLoginHistory');
 const adminLoginHistoryExport = require('./adminLoginHistoryExport');
 router.use('/admin', adminLoginHistory);

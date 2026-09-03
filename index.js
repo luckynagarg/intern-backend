@@ -16,6 +16,7 @@ const dotenvResult = require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
+const path = require("path");
 const {
   connect,
   resolveMongoUriFromEnv,
@@ -59,6 +60,18 @@ function logStartupDiagnostics() {
 logStartupDiagnostics();
 
 const app = express();
+
+// Create HTTP server (needed for Socket.IO).
+const http = require("http");
+const server = http.createServer(app);
+
+// Initialize Socket.IO for realtime messaging.
+const { initSocketServer } = require("./services/socketService");
+initSocketServer(server, {
+  corsOrigin: process.env.CORS_ALLOWED_ORIGINS
+    ? process.env.CORS_ALLOWED_ORIGINS.split(",").map((s) => s.trim())
+    : [process.env.FRONTEND_URL || "http://localhost:3000"],
+});
 
 // Security headers via helmet (production-grade defaults)
 const helmet = require("helmet");
@@ -217,6 +230,9 @@ app.use("/api", router);
 // Error handler must be after routes
 app.use(errorHandler);
 
+// Serve uploaded files (chat images, etc.) statically.
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
 // Connect to MongoDB BEFORE listening. In production, fail fast if Mongo is down
 // so Render restarts the service and we never serve traffic against an unconnected DB.
 (async () => {
@@ -294,7 +310,7 @@ app.use(errorHandler);
     `Mounted diagnostic routes: /api/routes, /api/health, /api/job, /api/internship`
   );
 
-  app.listen(port, () => {
+  server.listen(port, () => {
     console.log(`Listening on ${port}`);
   });
 })();

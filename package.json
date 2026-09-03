@@ -24,11 +24,13 @@
     "helmet": "^8.2.0",
     "mongodb": "^6.14.2",
     "mongoose": "^8.12.1",
+    "multer": "^2.3.0",
     "nodemailer": "^9.0.5",
     "nodemon": "^3.1.9",
     "pdfkit": "^0.19.1",
     "razorpay": "^2.9.6",
     "resend": "^6.18.1",
+    "socket.io": "^4.8.3",
     "validator": "^13.15.35",
     "zod": "^4.4.3"
   },
