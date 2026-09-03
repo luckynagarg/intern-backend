@@ -31,10 +31,14 @@ const { verifyFirebaseIdToken } = require("../middleware/authFirebase");
 const { requireAdmin } = require("../middleware/requireAdmin");
 
 // Admin endpoints
-// /admin/adminlogin remains unprotected (login gate). All other admin routes should require admin.
+const { requireAdminAccess } = require("../middleware/adminSession");
+
+// /api/admin/adminlogin remains unprotected (login gate). All other admin
+// routes accept EITHER a server-signed admin session token (username/password
+// login) OR a Firebase ID token with the admin custom claim.
 router.use("/admin", (req, res, next) => {
-  if (req.path === "/adminlogin") return admin.handle(req, res, next);
-  return verifyFirebaseIdToken(req, res, () => requireAdmin(req, res, next));
+  if (req.path === "/adminlogin") return admin(req, res, next);
+  return requireAdminAccess(req, res, next);
 });
 
 // Job & internship CRUD

@@ -5,6 +5,7 @@ const AdminConfig = require("../Model/AdminConfig");
 const UserProfile = require("../Model/UserProfile");
 const { getAuthOrThrow } = require("../config/firebaseAdmin");
 const { deleteUserCompletely } = require("../services/userDeletionService");
+const { issueAdminSessionToken } = require("../middleware/adminSession");
 const adminuser = process.env.ADMIN_USER || "admin";
 const adminpass = process.env.ADMIN_PASS || "admin";
 
@@ -198,6 +199,10 @@ router.post("/adminlogin", async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Admin login successful",
+      data: {
+        token: issueAdminSessionToken(),
+        tokenType: "admin-session",
+      },
     });
   }
 
@@ -210,6 +215,10 @@ router.post("/adminlogin", async (req, res) => {
         return res.status(200).json({
           success: true,
           message: "Admin login successful",
+          data: {
+            token: issueAdminSessionToken(),
+            tokenType: "admin-session",
+          },
         });
       }
     }
