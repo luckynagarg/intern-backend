@@ -2,10 +2,179 @@ const express = require("express");
 const router = express.Router();
 const bcrypt = require("bcrypt");
 const AdminConfig = require("../Model/AdminConfig");
+const UserProfile = require("../Model/UserProfile");
+const { getAuthOrThrow } = require("../config/firebaseAdmin");
+const { deleteUserCompletely } = require("../services/userDeletionService");
 const adminuser = process.env.ADMIN_USER || "admin";
 const adminpass = process.env.ADMIN_PASS || "admin";
 
 module.exports = router;
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/users
+// Admin-only. Lists Firebase Auth users (paged) enriched with their
+// UserProfile data. Query: ?search=<email or name>&limit&nextPageToken
+// ---------------------------------------------------------------------------
+router.get("/users", async (req, res) => {
+  try {
+    const limit = Math.min(
+      Math.max(parseInt(String(req.query.limit || "100"), 10), 1),
+      500
+    );
+    const search = String(req.query.search || "").trim().toLowerCase();
+    const pageToken = String(req.query.nextPageToken || "") || undefined;
+
+    const auth = getAuthOrThrow();
+    const list = await auth.listUsers(limit, pageToken);
+
+    const uidSet = new Set(list.users.map((u) => u.uid));
+    const profiles = await UserProfile.find({
+      firebaseUid: { $in: [...uidSet] },
+    })
+      .select(
+        "firebaseUid name username nickname email photo friendCount createdAt"
+      )
+      .lean();
+    const profileByUid = new Map(profiles.map((p) => [p.firebaseUid, p]));
+
+    let users = list.users.map((u) => {
+      const profile = profileByUid.get(u.uid) || null;
+      return {
+        uid: u.uid,
+        email: u.email || profile?.email || null,
+        name: u.displayName || profile?.name || null,
+        nickname: profile?.nickname || null,
+        photo: u.photoURL || profile?.photo || null,
+        emailVerified: !!u.emailVerified,
+        disabled: !!u.disabled,
+        friendCount: profile?.friendCount || 0,
+        createdAt: u.metadata?.creationTime || profile?.createdAt || null,
+        lastSignInAt: u.metadata?.lastSignInTime || null,
+      };
+    });
+
+    // Server-side search filter (email / name / uid).
+    if (search) {
+      users = users.filter(
+        (u) =>
+          (u.email && u.email.toLowerCase().includes(search)) ||
+          (u.name && u.name.toLowerCase().includes(search)) ||
+          (u.nickname && String(u.nickname).toLowerCase().includes(search)) ||
+          u.uid.toLowerCase().includes(search)
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: users,
+      nextPageToken: list.pageToken || null,
+    });
+  } catch (err) {
+    console.error("[admin/users] list failed:", err?.message);
+    return res.status(500).json({
+      success: false,
+      message: "Could not load users. Please try again later.",
+    });
+  }
+});
+
+
+// ---------------------------------------------------------------------------
+// DELETE /api/admin/users/:userId
+// Admin-only. Deletes the user and ALL their associated application data
+// (MongoDB + Firebase Auth). The admin performing the deletion comes from
+// the verified Firebase token (req.user), never from the request body.
+// ---------------------------------------------------------------------------
+router.delete("/users/:userId", async (req, res) => {
+  const adminUid = req.user?.uid;
+  const adminEmail = req.user?.email || null;
+  const targetUid = String(req.params?.userId || "").trim();
+
+  try {
+    if (!targetUid) {
+      return res
+        .status(400)
+        .json({ success: false, message: "User id is required." });
+    }
+
+    // Never allow an admin to accidentally delete themselves.
+    if (targetUid === adminUid) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot delete your own account.",
+      });
+    }
+
+    // Verify the target exists before deleting anything.
+    let targetAuthUser = null;
+    try {
+      targetAuthUser = await getAuthOrThrow().getUser(targetUid);
+    } catch (err) {
+      if (err?.code !== "auth/user-not-found") {
+        console.error("[admin/users] Firebase lookup failed:", err?.message);
+        return res.status(500).json({
+          success: false,
+          message: "Could not verify the user. Please try again later.",
+        });
+      }
+    }
+    const targetProfile = await UserProfile.findOne({ firebaseUid: targetUid })
+      .select("email name")
+      .lean();
+
+    if (!targetAuthUser && !targetProfile) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    const targetEmail = targetAuthUser?.email || targetProfile?.email || null;
+
+    // Delete all associated data (Mongo first, Firebase last).
+    const { summary, errors, firebaseDeleted } = await deleteUserCompletely({
+      uid: targetUid,
+      email: targetEmail,
+    });
+
+    if (!firebaseDeleted) {
+      // Firebase deletion failed — be honest about the partial state.
+      return res.status(500).json({
+        success: false,
+        message:
+          "Application data was deleted but the login account could not be removed. Please retry or contact support.",
+      });
+    }
+
+    // Audit log (no credentials/secrets — ids and counts only).
+    console.log("[AUDIT] USER_DELETED", {
+      action: "USER_DELETED",
+      timestamp: new Date().toISOString(),
+      adminUid,
+      adminEmail,
+      deletedUserId: targetUid,
+      deletedUserEmail: targetEmail,
+      summary,
+      ...(errors.length ? { partialErrors: errors } : {}),
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "User deleted successfully.",
+      data: { summary },
+    });
+  } catch (err) {
+    console.error("[admin/users] deletion failed:", {
+      adminUid,
+      targetUid,
+      error: err?.message,
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete the user. Please try again later.",
+    });
+  }
+});
 
 /**
  * POST /api/admin/adminlogin
