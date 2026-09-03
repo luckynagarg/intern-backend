@@ -136,13 +136,15 @@ router.get(
 
     const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 50);
 
-    // Match name, username, or nickname (case-insensitive via lowercaseNickname).
+    // Match name, username, nickname (case-insensitive via lowercaseNickname),
+    // or email — so users can find each other by the email they signed up with.
     const users = await UserProfile.find({
       $or: [
         { name: { $regex: regex } },
         { username: { $regex: regex } },
         { nickname: { $regex: regex } },
         { lowercaseNickname: { $regex: regex } },
+        { email: { $regex: regex } },
       ],
       firebaseUid: { $ne: caller },
     })
@@ -197,6 +199,32 @@ router.get(
     if (!caller) throw unauthorized('Unauthorized');
 
     const limit = Math.min(Math.max(parseInt(req.query.limit || '12', 10), 1), 30);
+
+    // Backfill the caller's profile if it doesn't exist yet (e.g. brand-new
+    // signup that never hit /api/profile/bootstrap), so this user is
+    // discoverable by others in search and suggestions.
+    const callerExists = await UserProfile.exists({ firebaseUid: caller });
+    if (!callerExists) {
+      try {
+        await UserProfile.create({
+          firebaseUid: caller,
+          name: req.user?.name || null,
+          email: req.user?.email || null,
+          username: null,
+          headline: null,
+          bio: null,
+          location: null,
+          skills: [],
+          college: null,
+          company: null,
+          socialLinks: {},
+          privacy: 'public',
+        });
+      } catch (e) {
+        // Non-fatal — continue with suggestions even if backfill fails.
+        console.error('suggestions: profile backfill failed:', e?.message);
+      }
+    }
 
     const callerFriendIds = await getFriendIds(caller);
 
