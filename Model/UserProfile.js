@@ -104,6 +104,15 @@ username: {
       default: [],
       index: true,
     },
+
+    // Internal flag for QA/test accounts. Used for maintenance purposes only.
+    // Does NOT grant admin privileges. Admin access is enforced separately
+    // via Firebase custom claims checked in auth middleware.
+    isTestUser: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     // We manage updatedAt manually to keep schema consistent with existing style.
