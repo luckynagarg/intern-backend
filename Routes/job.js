@@ -34,7 +34,7 @@ router.post("/", verifyFirebaseIdToken, asyncHandler(async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
-    const data = await Job.find().sort({ createdAt: -1 }).lean();
+    const data = await Job.find({ isActive: { $ne: false } }).sort({ createAt: -1 }).lean();
     return res.status(200).json({ success: true, data });
   } catch (error) {
     console.log("Job GET / failed:", error?.message || error);

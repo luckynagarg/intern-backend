@@ -30,7 +30,7 @@ router.post("/", verifyFirebaseIdToken, asyncHandler(async (req, res) => {
 }));
 router.get("/", async (req, res) => {
   try {
-    const data = await Internship.find().sort({ createdAt: -1 }).lean();
+    const data = await Internship.find({ isActive: { $ne: false } }).sort({ createdAt: -1 }).lean();
     return res.status(200).json({ success: true, data });
   } catch (error) {
     console.log("Internship GET / failed:", error?.message || error);

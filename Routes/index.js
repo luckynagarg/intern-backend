@@ -43,6 +43,12 @@ router.use("/admin", (req, res, next) => {
 });
 router.use("/admin", admin);
 
+// Admin applications + jobs/internships management (protected by /admin guard above).
+const adminApplications = require("./adminApplications");
+const adminContent = require("./adminContent");
+router.use("/admin", adminApplications);
+router.use("/admin", adminContent);
+
 // Job & internship CRUD
 router.use("/internship", intern);
 router.use("/job", job);

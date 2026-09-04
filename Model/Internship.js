@@ -16,5 +16,11 @@ const Internshipschema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  // Admin-controlled publish state (defaults to active; backward compatible).
+  isActive: {
+    type: Boolean,
+    default: true,
+    index: true,
+  },
 });
 module.exports=mongoose.model("Internship",Internshipschema)

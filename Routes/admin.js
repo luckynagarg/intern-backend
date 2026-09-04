@@ -232,3 +232,76 @@ router.post("/adminlogin", async (req, res) => {
     message: "Invalid credentials",
   });
 });
+
+/**
+ * GET /api/admin/dashboard/stats
+ * Real database-backed dashboard metrics. Admin-only (parent /admin guard).
+ */
+router.get("/dashboard/stats", async (req, res) => {
+  try {
+    const { getDashboardStats } = require("../services/adminStatsService");
+    const data = await getDashboardStats();
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    console.error("[admin] dashboard/stats failed:", err?.message);
+    return res.status(500).json({ success: false, message: "Could not load dashboard statistics." });
+  }
+});
+
+/**
+ * GET /api/admin/settings
+ * Returns the persisted application settings.
+ */
+router.get("/settings", async (req, res) => {
+  try {
+    const Settings = require("../Model/Settings");
+    const config = await Settings.getSettingsDoc();
+    return res.status(200).json({ success: true, data: config });
+  } catch (err) {
+    console.error("[admin] settings read failed:", err?.message);
+    return res.status(500).json({ success: false, message: "Could not load settings." });
+  }
+});
+
+/**
+ * PUT /api/admin/settings
+ * Persists validated (non-secret) settings. Whitelists the allowed keys so an
+ * attacker cannot inject arbitrary schema fields.
+ */
+router.put("/settings", async (req, res) => {
+  try {
+    const Settings = require("../Model/Settings");
+    const body = req.body || {};
+    const config = await Settings.getSettingsDoc();
+
+    const ALLOWED_PLATFORM = ["siteName", "supportEmail", "maxApplicationsPerFree", "enablePublicSpace"];
+    const ALLOWED_CONTENT = ["requireApprovalForJobs", "requireApprovalForInternships", "maxCaptionLength"];
+    const ALLOWED_NOTIF = ["enableEmailNotifications", "enableSocialNotifications"];
+
+    const pick = (src, keys) => {
+      const out = {};
+      for (const k of keys) {
+        if (src[k] !== undefined) out[k] = src[k];
+      }
+      return out;
+    };
+
+    if (body.platform && typeof body.platform === "object") {
+      config.platform = { ...config.platform, ...pick(body.platform, ALLOWED_PLATFORM) };
+    }
+    if (body.content && typeof body.content === "object") {
+      config.content = { ...config.content, ...pick(body.content, ALLOWED_CONTENT) };
+    }
+    if (body.notifications && typeof body.notifications === "object") {
+      config.notifications = { ...config.notifications, ...pick(body.notifications, ALLOWED_NOTIF) };
+    }
+
+    config.updatedAt = new Date();
+    await config.save();
+
+    return res.status(200).json({ success: true, data: config });
+  } catch (err) {
+    console.error("[admin] settings update failed:", err?.message);
+    return res.status(500).json({ success: false, message: "Could not save settings." });
+  }
+});
