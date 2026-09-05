@@ -15,7 +15,13 @@ function envInt(name, defaultValue) {
 }
 
 module.exports = {
-  ENABLE_CHROME_OTP_POLICY: envBool('ENABLE_CHROME_OTP_POLICY', true),
+  // Chrome email-OTP login step. This is an OPTIONAL extra anti-phishing
+  // layer on top of Firebase authentication. It is opt-in (default OFF) so a
+  // valid Firebase login navigates directly to the dashboard (acceptance
+  // TEST 1). Set ENABLE_CHROME_OTP_POLICY=true in the deployment env to
+  // re-enable the email-OTP step for Chrome/Edge logins; the frontend still
+  // handles that flow gracefully (/verify-login-otp).
+  ENABLE_CHROME_OTP_POLICY: envBool('ENABLE_CHROME_OTP_POLICY', false),
   ENABLE_MOBILE_TIME_POLICY: envBool('ENABLE_MOBILE_TIME_POLICY', true),
 
   // Mobile allowed window (IST)

@@ -107,10 +107,10 @@ router.post(
 
 
 
-        // If Chrome: require email OTP.
-    // Honour the configurable Chrome OTP policy (ENABLE_CHROME_OTP_POLICY,
-    // defaults to true) instead of enforcing it unconditionally. The mobile
-    // time-window check above is applied independently of this branch.
+        // If Chrome: optionally require an email OTP. This respects the
+    // configurable Chrome OTP policy (ENABLE_CHROME_OTP_POLICY), which is
+    // opt-in and defaults to OFF so a valid login navigates directly to the
+    // dashboard. The mobile time-window check above is applied independently.
     const isChrome = browserType === "Google Chrome";
     const chromeOtpEnabled = isChromeOtpPolicyEnabled();
 

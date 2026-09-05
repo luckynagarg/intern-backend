@@ -43,17 +43,18 @@ router.post("/posts", verifyFirebaseIdToken, async (req, res) => {
     const userId = req.user.uid;
     const { name, photo, caption, mediaUrl, mediaType } = req.body;
 
-    if (!mediaUrl || !mediaType)
-      return res.status(400).json({ error: "mediaUrl and mediaType required" });
-
-    // Server-side content validation: restrict media type and require a real
-    // http(s) URL so the feed can't be abused as a free-form script/URL sink.
-    const ALLOWED_MEDIA_TYPES = ["image", "video"];
-    if (!ALLOWED_MEDIA_TYPES.includes(mediaType)) {
-      return res.status(400).json({ error: "mediaType must be image or video." });
-    }
-    if (typeof mediaUrl !== "string" || !/^https?:\/\/[^\s]+$/i.test(mediaUrl)) {
-      return res.status(400).json({ error: "mediaUrl must be a valid http(s) URL." });
+    // Media is optional — text-only posts are allowed. When media IS provided,
+    // validate the media type and require a real http(s) URL so the feed can't
+    // be abused as a free-form script/URL sink.
+    const hasMedia = !!mediaUrl && !!mediaType;
+    if (hasMedia) {
+      const ALLOWED_MEDIA_TYPES = ["image", "video"];
+      if (!ALLOWED_MEDIA_TYPES.includes(mediaType)) {
+        return res.status(400).json({ error: "mediaType must be image or video." });
+      }
+      if (typeof mediaUrl !== "string" || !/^https?:\/\/[^\s]+$/i.test(mediaUrl)) {
+        return res.status(400).json({ error: "mediaUrl must be a valid http(s) URL." });
+      }
     }
     if (caption && typeof caption === "string" && caption.length > 5000) {
       return res.status(400).json({ error: "caption is too long." });
@@ -91,10 +92,17 @@ router.post("/posts", verifyFirebaseIdToken, async (req, res) => {
       }
     }
 
+    // media is an array of { mediaType, url }. Only include media
+    // when both fields are present; otherwise store an empty array
+    // (text-only posts are allowed).
+    const media = hasMedia
+      ? [{ mediaType, url: mediaUrl }]
+      : [];
+
     const post = await PublicPost.create({
       author: { userId, name: name || "", photo: photo || "" },
       caption: caption || "",
-      media: { mediaType, url: mediaUrl },
+      media,
     });
 
     return res.status(201).json(post);
@@ -180,7 +188,7 @@ router.post("/posts/:postId/comments", verifyFirebaseIdToken, async (req, res) =
     if (!text)
       return res.status(400).json({ error: "text required" });
 
-const comment = await PostComment.create({
+    const comment = await PostComment.create({
       postId,
       author: { userId, name: name || "", photo: photo || "" },
       text,
@@ -256,7 +264,7 @@ router.post("/posts/:postId/like", verifyFirebaseIdToken, async (req, res) => {
 
     if (!postId) return res.status(400).json({ error: "postId required" });
 
-const existing = await PostLike.findOne({ postId, userId });
+    const existing = await PostLike.findOne({ postId, userId });
 
     if (existing) {
       await PostLike.deleteOne({ postId, userId });
