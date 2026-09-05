@@ -8,6 +8,8 @@ const { badRequest, internalServerError } = require('../utils/httpErrors');
 
 const UserProfile = require('../Model/UserProfile');
 
+const { getAuthOrThrow } = require('../config/firebaseAdmin');
+
 function safeString(x) {
   return typeof x === 'string' ? x : null;
 }
@@ -203,6 +205,84 @@ router.post(
         ...logBase(),
       });
     }
+  })
+);
+
+// PATCH /api/profile/photo
+// Persist a new profile photo. The front-end uploads the raw image to
+// Firebase Storage (via the existing uploadMedia helper) and sends ONLY the
+// resulting download URL here — this is the only place the canonical DB write
+// happens, so the client is never trusted to write its own profile.
+router.patch(
+  '/photo',
+  verifyFirebaseIdToken,
+  asyncHandler(async (req, res) => {
+    const uid = req.user?.uid;
+    if (!uid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+        error: { message: 'Unauthorized' },
+      });
+    }
+
+    const photoUrl = safeString(req.body?.photoUrl ?? null);
+    if (!photoUrl) {
+      return res.status(400).json({
+        success: false,
+        message: 'photoUrl is required',
+        error: { message: 'photoUrl is required' },
+      });
+    }
+    // Accept only absolute http(s) URLs (Firebase Storage download URLs).
+    if (!/^https?:\/\/.+/i.test(photoUrl)) {
+      return res.status(400).json({
+        success: false,
+        message: 'photoUrl must be a valid http(s) URL',
+        error: { message: 'photoUrl must be a valid http(s) URL' },
+      });
+    }
+
+    // 1) Persist the image reference in the user's DB record (source of truth).
+    //    Updating BOTH `photo` and `profilePhoto` keeps every friend/suggestion
+    //    view consistent regardless of which field it reads.
+    const updated = await UserProfile.findOneAndUpdate(
+      { firebaseUid: uid },
+      { $set: { photo: photoUrl, profilePhoto: photoUrl, updatedAt: new Date() } },
+      { new: true, lean: true }
+    );
+
+    // 2) Mirror onto the Firebase user's photoURL so the avatar persists across
+    //    sign-in/out and is consistent in Redux/navbar (which read photoURL).
+    //    Non-fatal: the DB record above is canonical.
+    try {
+      const authService = getAuthOrThrow();
+      await authService.updateUser(uid, { photoURL: photoUrl });
+    } catch (err) {
+      console.warn('[profile/photo] could not update Firebase photoURL', {
+        userId: uid,
+        message: err?.message,
+      });
+    }
+
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: 'Profile not found. Please refresh the page and try again.',
+        error: { message: 'Profile not found' },
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile photo updated.',
+      data: {
+        _id: updated.firebaseUid,
+        photo: updated.photo,
+        profilePhoto: updated.profilePhoto,
+        name: updated.name ?? null,
+      },
+    });
   })
 );
 

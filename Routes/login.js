@@ -107,10 +107,14 @@ router.post(
 
 
 
-    // If Chrome: require email OTP
+        // If Chrome: require email OTP.
+    // Honour the configurable Chrome OTP policy (ENABLE_CHROME_OTP_POLICY,
+    // defaults to true) instead of enforcing it unconditionally. The mobile
+    // time-window check above is applied independently of this branch.
     const isChrome = browserType === "Google Chrome";
+    const chromeOtpEnabled = isChromeOtpPolicyEnabled();
 
-    if (isChrome) {
+    if (isChrome && chromeOtpEnabled) {
       if (!emailAddress) {
         // record failed login for audit, but keep existing behavior
         await createLoginAttempt({
