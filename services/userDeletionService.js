@@ -11,6 +11,11 @@
  *   honestly rather than silently.
  */
 
+const LoginOtpVerification = require('../Model/LoginOtpVerification');
+const LanguageOtpChallenge = require('../Model/LanguageOtpChallenge');
+const ResumeOtpVerification = require('../Model/ResumeOtpVerification');
+const PasswordRecovery = require('../Model/PasswordRecovery');
+const EmailOtpChallenge = require('../Model/EmailOtpChallenge');
 const { getAuthOrThrow } = require('../config/firebaseAdmin');
 
 const UserProfile = require('../Model/UserProfile');
@@ -89,11 +94,6 @@ function buildDeletionPlan({ uid, email }) {
 
   return plan;
 }
-
-const LoginOtpVerification = require('../Model/LoginOtpVerification');
-const LanguageOtpChallenge = require('../Model/LanguageOtpChallenge');
-const ResumeOtpVerification = require('../Model/ResumeOtpVerification');
-const PasswordRecovery = require('../Model/PasswordRecovery');
 
 /**
  * Remove the deleted user from ex-friends' cached social graph and fix
@@ -186,5 +186,3 @@ async function deleteUserCompletely({ uid, email }) {
 module.exports = {
   deleteUserCompletely,
 };
-
-const EmailOtpChallenge = require('../Model/EmailOtpChallenge');

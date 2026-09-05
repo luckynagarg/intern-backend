@@ -8,79 +8,13 @@ const { verifyFirebaseIdToken } = require('../middleware/authFirebase');
 const { unauthorized, badRequest, internalServerError } = require('../utils/httpErrors');
 const { populateNotificationActors } = require('../services/notificationService');
 
-const { pick, randInt, fakeDateWithinLastMonths, uniqueId } = require('../seed/utils');
-
-function getNotificationTypeRoll() {
-  // Weighted towards application/internship.
-  const r = Math.random();
-  if (r < 0.28) return 'application';
-  if (r < 0.52) return 'internship';
-  if (r < 0.68) return 'announcement';
-  if (r < 0.82) return 'social';
-  return 'admin';
-}
-
-function generateRealisticNotificationsForUser(userId) {
-  const sample = [
-    'Your internship application has been shortlisted.',
-    'New internship matching your profile is live.',
-    'Admin announcement: Weekly hiring drive starts tomorrow.',
-    'Someone liked your Public Space post.',
-    'New comment on your Public Space post.',
-    'Company viewed your profile.',
-    'Interview scheduled for your application.',
-    'Your application status updated to shortlisted.',
-    'Career tip: Optimize your resume for ATS scoring.',
-    'Public Space: Welcome! Start your first discussion post.',
-    'Reminder: Profile completion increases matching accuracy.',
-    'Internship deadline is approaching. Apply soon!',
-    'Weekly recommendations: Internships you might like.',
-    'Application status updated: accepted.',
-    'Resume downloaded (your resume was viewed by recruiters).',
-  ];
-
-  const titles = [
-    'Update from Internshala',
-    'New Opportunity',
-    'Admin Announcement',
-    'Social Notification',
-    'Application Status',
-    'Profile Reminder',
-    'Interview Update',
-    'Weekly Highlights',
-    'Deadline Alert',
-  ];
-
-  const count = randInt(12, 15);
-  const chosen = sample.sort(() => Math.random() - 0.5).slice(0, count);
-
-  return chosen.map((message, idx) => {
-    const type = getNotificationTypeRoll();
-    return {
-      userId,
-      title: pick(titles),
-      message,
-      type,
-      read: idx < 6 ? false : true, // seed with some unread
-      createdAt: fakeDateWithinLastMonths(6),
-      _seedId: uniqueId('n_'),
-    };
-  });
-}
-
-// Ensure seeded notifications exist per user (dev only).
-async function ensureSeeded(userId) {
-  const existingCount = await Notification.countDocuments({ userId });
-  if (existingCount > 0) return;
-
-  const docs = generateRealisticNotificationsForUser(userId);
-  await Notification.insertMany(docs.map(({ _seedId, ...rest }) => rest), {
-    ordered: false,
-  });
+// Map any error to a safe HTTP error for client responses.
+function mapErrorToHttpError(err) {
+  if (err && err.statusCode) return err;
+  return internalServerError(err?.message || 'Internal server error');
 }
 
 function toApiNotification(n) {
-  // Backward/forward-compatible shape: {_id,title,body,type,read,createdAt,actor,link,action}
   const _id = String(n._id ?? n.id ?? '');
   const title = typeof n.title === 'string' ? n.title : '';
   const body =
@@ -101,26 +35,24 @@ function toApiNotification(n) {
     type,
     read,
     createdAt,
-    actor: n.actor ?? null,
-    fromUser: n.fromUser ?? null,
-    link: n.link ?? null,
+    actor: n.actor || null,
+    link: n.link || null,
     action: n.action || null,
-    entityType: n.entityType || null,
-    entityId: n.entityId || null,
   };
 }
 
-function mapErrorToHttpError(err) {
-  if (err instanceof mongoose.Error.CastError) {
-    return badRequest('Invalid notification id.', { field: err.path, value: err.value });
-  }
-  if (err instanceof mongoose.Error.ValidationError) {
-    return badRequest('Notification validation failed.', err.errors);
-  }
-  if (err && typeof err.code === 'number' && String(err.code).startsWith('1')) {
-    return badRequest('Duplicate notification.', err);
-  }
-  return internalServerError(err?.message || 'Internal server error');
+// Development-only seed function for notifications.
+// Only auto-seed fake notifications in development environment.
+async function ensureSeeded(userId) {
+  if (process.env.NODE_ENV === 'production') return;
+  const existingCount = await Notification.countDocuments({ userId });
+  if (existingCount > 0) return;
+  // Seed only in non-production environments.
+  const seedDocs = [
+    { userId, title: 'Welcome!', body: 'Welcome to Intern Area.', type: 'announcement', read: false },
+    { userId, title: 'Complete your profile', body: 'Add skills to get better matches.', type: 'reminder', read: false },
+  ];
+  await Notification.insertMany(seedDocs, { ordered: false });
 }
 
 // GET /api/notifications?page=1&limit=20&unreadOnly=true&type=social

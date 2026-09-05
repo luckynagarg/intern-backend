@@ -50,6 +50,8 @@ async function getDashboardStats() {
   const [
     totalApplications,
     acceptedApplications,
+    pendingApplications,
+    rejectedApplications,
     activeJobs,
     activeInternships,
     totalUsers,
@@ -62,6 +64,8 @@ async function getDashboardStats() {
   ] = await Promise.all([
     Application.countDocuments({}).catch(() => 0),
     Application.countDocuments({ status: "accepted" }).catch(() => 0),
+    Application.countDocuments({ status: "pending" }).catch(() => 0),
+    Application.countDocuments({ status: "rejected" }).catch(() => 0),
     Job.countDocuments({ isActive: { $ne: false } }).catch(() => 0),
     Internship.countDocuments({ isActive: { $ne: false } }).catch(() => 0),
     UserProfile.countDocuments({}).catch(() => 0),
@@ -80,6 +84,11 @@ async function getDashboardStats() {
   return {
     totalApplications: total,
     acceptedApplications: accepted,
+    applicationsByStatus: {
+      pending: Number(pendingApplications) || 0,
+      accepted: accepted,
+      rejected: Number(rejectedApplications) || 0,
+    },
     activeJobs: Number(activeJobs) || 0,
     activeInternships: Number(activeInternships) || 0,
     totalUsers: Number(totalUsers) || 0,

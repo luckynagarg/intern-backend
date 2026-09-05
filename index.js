@@ -69,8 +69,11 @@ const server = http.createServer(app);
 const { initSocketServer } = require("./services/socketService");
 initSocketServer(server, {
   corsOrigin: process.env.CORS_ALLOWED_ORIGINS
-    ? process.env.CORS_ALLOWED_ORIGINS.split(",").map((s) => s.trim())
-    : [process.env.FRONTEND_URL || "http://localhost:3000"],
+    ? process.env.CORS_ALLOWED_ORIGINS
+        .split(",")
+        .map((s) => sanitizeOrigin(s))
+        .filter(Boolean)
+    : [sanitizeOrigin(process.env.FRONTEND_URL) || "http://localhost:3000"],
 });
 
 // Security headers via helmet (production-grade defaults)
@@ -100,10 +103,56 @@ const environment = process.env.NODE_ENV || "development";
 // CORS allowlist
 // - FRONTEND_URL / CORS_ORIGIN (single) are treated as an extra value if provided.
 // - CORS_ALLOWED_ORIGINS can provide a comma-separated full list and takes precedence.
-const frontendUrl = process.env.FRONTEND_URL || process.env.CORS_ORIGIN;
+
+/**
+ * Normalize a single origin string from the environment into a plain URL.
+ *
+ * Handles the common copy/paste accidents that break CORS silently:
+ *   - Markdown links:  "[https://a.com](https://a.com)"  -> "https://a.com"
+ *   - Surrounding quotes: '"https://a.com"'              -> "https://a.com"
+ *   - Square brackets / stray parens around the URL
+ *   - Trailing slash (browsers never send one in the Origin header)
+ *   - Leading/trailing whitespace
+ *
+ * Returns the cleaned origin, or null when the value is not a usable URL.
+ */
+function sanitizeOrigin(raw) {
+  if (typeof raw !== "string") return null;
+  let v = raw.trim();
+  if (!v) return null;
+
+  // Strip one pair of matching surrounding quotes.
+  if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) {
+    v = v.slice(1, -1).trim();
+  }
+
+  // Markdown link form: [label](url) -> url
+  const md = v.match(/^\[([^\]]*)\]\(([^)]+)\)$/);
+  if (md) {
+    v = md[2].trim();
+  }
+
+  // Remove any stray markdown/bracket characters.
+  v = v.replace(/[\[\]()]/g, "").trim();
+
+  // Strip a single trailing slash (origins never include a path).
+  if (v.length > 1 && v.endsWith("/")) {
+    v = v.slice(0, -1);
+  }
+
+  // Must be a plain http(s) origin to be usable for CORS.
+  if (!/^https?:\/\/[^\s/]+$/i.test(v)) return null;
+
+  return v;
+}
+
+const frontendUrl = sanitizeOrigin(process.env.FRONTEND_URL || process.env.CORS_ORIGIN);
 
 const corsAllowedOriginsFromEnv = process.env.CORS_ALLOWED_ORIGINS
-  ? process.env.CORS_ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+  ? process.env.CORS_ALLOWED_ORIGINS
+      .split(",")
+      .map((s) => sanitizeOrigin(s))
+      .filter(Boolean)
   : [];
 
 const defaultAllowedOrigins = [
@@ -292,15 +341,32 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
   }
 
   // Validate Resend environment variables on startup.
-  // This ensures email system is operational before accepting requests.
+  // - Fully configured  -> success message.
+  // - Partially configured (e.g. RESEND_API_KEY set but EMAIL_FROM missing)
+  //   -> clear warning; sendEmail() falls back to Gmail SMTP automatically.
+  // - Never prints secret values, only variable NAMES.
   try {
     validateResendEnvVars();
     console.log('[startup] Resend environment variables: OK');
+    console.log('[startup] Email service ready');
   } catch (err) {
-    console.warn('[startup] Resend configuration issue:', err.message);
-    console.warn('[startup] Email sending will fail until Resend is configured correctly.');
-    // Do NOT block server start. Resend misconfiguration is non-fatal for the API,
-    // but email-dependent features will log errors on use.
+    const hasApiKey = !!process.env.RESEND_API_KEY;
+    if (hasApiKey) {
+      console.warn(
+        '[startup] Resend partially configured:',
+        err.message
+      );
+      console.warn(
+        '[startup] The From address will fall back to EMAIL_FROM_NAME + SMTP_FROM_EMAIL/SMTP_USER, and delivery falls back to Gmail SMTP when Resend rejects a send.'
+      );
+      console.warn('[startup] Email service ready (fallback SMTP active)');
+    } else {
+      console.warn('[startup] Resend configuration issue:', err.message);
+      console.warn(
+        '[startup] Email sending will use the Gmail SMTP fallback; set the missing variables to enable Resend.'
+      );
+      console.log('[startup] Email service ready (SMTP fallback)');
+    }
   }
 
   console.log(`Server running on port ${port}`);

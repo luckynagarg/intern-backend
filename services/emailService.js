@@ -68,6 +68,21 @@ function resetResend() {
 
 let _transporter = null;
 
+/**
+ * Validates that all required Resend environment variables are present.
+ * Safe to call at startup. NEVER logs or returns secret values.
+ *
+ * @throws {Error} with a non-sensitive message listing missing variable NAMES.
+ */
+function validateResendEnvVars() {
+  const missing = getMissingResendEnvVars();
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing Resend environment variable(s): ${missing.join(", ")}`
+    );
+  }
+}
+
 function getMissingSmtpEnvVars() {
   return SMTP_REQUIRED_VARS.filter(
     (key) => !process.env[key]
@@ -426,6 +441,7 @@ module.exports = {
   sendOTPEmail,
 
   validateSmtpEnvVars,
+  validateResendEnvVars,
   getMissingSmtpEnvVars,
   getMissingResendEnvVars,
 

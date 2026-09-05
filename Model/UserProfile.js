@@ -20,10 +20,10 @@ const UserProfileSchema = new mongoose.Schema(
     //
     // Uniqueness is enforced via PARTIAL unique indexes (see bottom of
     // this file) that only apply when the field is a non-empty string.
-username: {
+    // IMPORTANT: do NOT also set `unique: true` on the field itself —
+    // that creates a duplicate index and Mongoose warns on startup.
+    username: {
       type: String,
-      unique: true,
-      sparse: true,
       trim: true,
       lowercase: true,
     },
@@ -31,15 +31,11 @@ username: {
     // Public nickname (@username style). Unique, validated 4-20 chars.
     nickname: {
       type: String,
-      unique: true,
-      sparse: true,
       trim: true,
     },
     // Lowercased copy of nickname for case-insensitive unique + search.
     lowercaseNickname: {
       type: String,
-      unique: true,
-      sparse: true,
       trim: true,
       lowercase: true,
     },

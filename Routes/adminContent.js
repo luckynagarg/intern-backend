@@ -37,7 +37,7 @@ router.get("/jobs", async (req, res) => {
 
   const [total, items] = await Promise.all([
     Job.countDocuments(query),
-    Job.find(query).sort({ createAt: -1 }).skip(skip).limit(limit).lean(),
+    Job.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
   ]);
 
   return res.json({

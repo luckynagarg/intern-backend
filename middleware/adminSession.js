@@ -11,28 +11,34 @@ const { forbidden, unauthorized } = require("../utils/httpErrors");
  * the admin custom claim.
  *
  * Secret resolution:
- *   1. ADMIN_SESSION_SECRET env var (recommended for production)
- *   2. Fallback: SHA-256 of the admin credentials (dev convenience) —
- *      rotating ADMIN_PASS also invalidates old sessions.
+ *   1. ADMIN_SESSION_SECRET env var (REQUIRED for production)
+ *   2. Throws if not configured — no insecure fallback.
  */
+
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
 
 function getAdminUser() {
-  return process.env.ADMIN_USER || "admin";
+  const user = process.env.ADMIN_USER;
+  if (!user || !user.trim()) {
+    throw new Error('[adminSession] ADMIN_USER environment variable is required.');
+  }
+  return user.trim();
 }
 
 function getAdminPass() {
-  return process.env.ADMIN_PASS || "admin";
+  const pass = process.env.ADMIN_PASS;
+  if (!pass || pass.length < 8) {
+    throw new Error('[adminSession] ADMIN_PASS must be at least 8 characters.');
+  }
+  return pass;
 }
 
 function getAdminSessionSecret() {
-  if (process.env.ADMIN_SESSION_SECRET) {
-    return process.env.ADMIN_SESSION_SECRET;
+  const secret = process.env.ADMIN_SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error('[adminSession] ADMIN_SESSION_SECRET must be at least 32 characters for production security.');
   }
-  return crypto
-    .createHash("sha256")
-    .update(`admin-session:${getAdminUser()}:${getAdminPass()}`)
-    .digest();
+  return secret;
 }
 
 function safeEqual(a, b) {

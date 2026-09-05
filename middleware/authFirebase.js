@@ -69,14 +69,10 @@ const verifyFirebaseIdToken = asyncHandler(async (req, res, next) => {
     decoded = await authService.verifyIdToken(token);
   } catch (e) {
     const code = e && e.code ? e.code : null;
-    const msg = (e && (e.message || e.toString())) || 'unknown error';
-
     // Log at error level without the full token.
     console.warn('[authFirebase] verifyIdToken failed:', code || 'unknown');
-
-    // If firebase-admin wasn't initialized due to missing env vars,
-    // return a clear client error instead of crashing.
-    throw unauthorized(`Firebase token verification failed: code=${code || 'unknown'} message=${msg}`);
+    // Return a generic error to avoid leaking internal details.
+    throw unauthorized('Authentication failed: invalid or expired token.');
   }
 
   if (!decoded || !decoded.uid) {
