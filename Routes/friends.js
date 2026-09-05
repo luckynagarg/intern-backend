@@ -94,7 +94,65 @@ function toFriendProfile(profile, relationship) {
     relationship: relationship || 'none',
   };
 }
-// GET /api/friends/list — accepted friends of the caller
+// GET /api/friends/pending â€” pending incoming friend requests (alias for /requests)
+router.get('/pending', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const uid = toUserId(req.user?.uid);
+  if (!uid) throw unauthorized('Unauthorized');
+  const requests = await FriendRequest.find({ receiver: uid, status: 'pending' }).sort({ createdAt: -1 }).lean();
+  const senderIds = requests.map((r) => r.sender).filter(Boolean);
+  const senders = await UserProfile.find({ firebaseUid: { $in: senderIds } }).lean();
+  const senderMap = new Map(senders.map((s) => [s.firebaseUid, s]));
+  const data = requests.map((r) => {
+    const senderProfile = senderMap.get(r.sender);
+    return {
+      _id: String(r._id),
+      senderId: r.sender,
+      receiverId: uid,
+      status: 'pending',
+      createdAtISO: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+      sender: senderProfile ? {
+        _id: senderProfile.firebaseUid,
+        name: senderProfile.name || null,
+        username: senderProfile.username || null,
+        nickname: senderProfile.nickname || null,
+        photo: senderProfile.photo || null,
+        headline: senderProfile.headline || null,
+      } : null,
+    };
+  });
+  return res.status(200).json({ success: true, data });
+}));
+
+// GET /api/friends/sent â€” pending sent friend requests
+router.get('/sent', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const uid = toUserId(req.user?.uid);
+  if (!uid) throw unauthorized('Unauthorized');
+  const requests = await FriendRequest.find({ sender: uid, status: 'pending' }).sort({ createdAt: -1 }).lean();
+  const receiverIds = requests.map((r) => r.receiver).filter(Boolean);
+  const receivers = await UserProfile.find({ firebaseUid: { $in: receiverIds } }).lean();
+  const receiverMap = new Map(receivers.map((s) => [s.firebaseUid, s]));
+  const data = requests.map((r) => {
+    const receiverProfile = receiverMap.get(r.receiver);
+    return {
+      _id: String(r._id),
+      senderId: uid,
+      receiverId: r.receiver,
+      status: 'pending',
+      createdAtISO: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+      receiver: receiverProfile ? {
+        _id: receiverProfile.firebaseUid,
+        name: receiverProfile.name || null,
+        username: receiverProfile.username || null,
+        nickname: receiverProfile.nickname || null,
+        photo: receiverProfile.photo || null,
+        headline: receiverProfile.headline || null,
+      } : null,
+    };
+  });
+  return res.status(200).json({ success: true, data });
+}));
+
+// GET /api/friends/list â€” accepted friends of the caller
 router.get('/list', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const caller = toUserId(req.user?.uid);
   if (!caller) throw unauthorized('Unauthorized');
@@ -112,7 +170,7 @@ router.get('/list', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   return res.status(200).json({ success: true, data, pagination: { total: data.length, page: 1, pageSize: data.length } });
 }));
 
-// GET /api/friends/requests — pending friend requests
+// GET /api/friends/requests ï¿½ pending friend requests
 router.get('/requests', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const uid = toUserId(req.user?.uid);
   if (!uid) throw unauthorized('Unauthorized');
@@ -131,10 +189,11 @@ router.get('/requests', verifyFirebaseIdToken, asyncHandler(async (req, res) => 
   return res.status(200).json({ success: true, data });
 }));
 
-// POST /api/friends/request — send a friend request
+// POST /api/friends/request â€” send a friend request
+// Accepts both { targetUid } and { receiver } for compatibility.
 router.post('/request', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const sender = toUserId(req.user?.uid);
-  const receiver = toUserId(req.body?.targetUid);
+  const receiver = toUserId(req.body?.targetUid || req.body?.receiver);
   if (!sender) throw unauthorized('Unauthorized');
   if (!receiver) throw badRequest('targetUid is required');
   if (sender === receiver) throw badRequest('Cannot friend yourself');
@@ -153,10 +212,25 @@ router.post('/request', verifyFirebaseIdToken, asyncHandler(async (req, res) => 
   return res.status(201).json({ success: true, data: { _id: String(request._id) } });
 }));
 
-// POST /api/friends/accept — accept a friend request
+// POST /api/friends/cancel â€” cancel a sent friend request
+// Accepts both { targetUid } and { receiver } for compatibility.
+router.post('/cancel', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
+  const sender = toUserId(req.user?.uid);
+  const receiver = toUserId(req.body?.targetUid || req.body?.receiver);
+  if (!sender) throw unauthorized('Unauthorized');
+  if (!receiver) throw badRequest('targetUid is required');
+  const request = await FriendRequest.findOne({ sender, receiver, status: 'pending' });
+  if (!request) throw notFound('Friend request not found');
+  request.status = 'cancelled';
+  await request.save();
+  return res.status(200).json({ success: true });
+}));
+
+// POST /api/friends/accept â€” accept a friend request
+// Accepts both { targetUid } and { sender } for compatibility.
 router.post('/accept', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const receiver = toUserId(req.user?.uid);
-  const sender = toUserId(req.body?.targetUid);
+  const sender = toUserId(req.body?.targetUid || req.body?.sender);
   if (!receiver) throw unauthorized('Unauthorized');
   if (!sender) throw badRequest('targetUid is required');
   const request = await FriendRequest.findOne({ sender, receiver, status: 'pending' });
@@ -175,10 +249,11 @@ router.post('/accept', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   return res.status(200).json({ success: true });
 }));
 
-// POST /api/friends/reject — reject a friend request
+// POST /api/friends/reject â€” reject a friend request
+// Accepts both { targetUid } and { sender } for compatibility.
 router.post('/reject', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const receiver = toUserId(req.user?.uid);
-  const sender = toUserId(req.body?.targetUid);
+  const sender = toUserId(req.body?.targetUid || req.body?.sender);
   if (!receiver) throw unauthorized('Unauthorized');
   if (!sender) throw badRequest('targetUid is required');
   const request = await FriendRequest.findOne({ sender, receiver, status: 'pending' });
@@ -187,7 +262,7 @@ router.post('/reject', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   await request.save();
   return res.status(200).json({ success: true });
 }));
-// GET /api/friends/search — search users (safe regex)
+// GET /api/friends/search ï¿½ search users (safe regex)
 router.get('/search', verifyFirebaseIdToken, asyncHandler(async (req, res) => {
   const uid = toUserId(req.user?.uid);
   if (!uid) throw unauthorized('Unauthorized');
