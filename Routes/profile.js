@@ -9,6 +9,10 @@ const { badRequest, internalServerError } = require('../utils/httpErrors');
 const UserProfile = require('../Model/UserProfile');
 
 const { getAuthOrThrow } = require('../config/firebaseAdmin');
+const {
+  deleteObjectIfOwned,
+  objectPathFromPublicUrl,
+} = require('../config/supabase');
 
 function safeString(x) {
   return typeof x === 'string' ? x : null;
@@ -246,9 +250,25 @@ router.patch(
     // 1) Persist the image reference in the user's DB record (source of truth).
     //    Updating BOTH `photo` and `profilePhoto` keeps every friend/suggestion
     //    view consistent regardless of which field it reads.
+    //    `photoStoragePath` records the Supabase object path (when the URL is
+    //    ours) so the old object can be cleaned up on replacement. Legacy
+    //    Firebase Storage URLs are left untouched and keep working.
+    const previous = await UserProfile.findOne({ firebaseUid: uid })
+      .select('photo photoStoragePath')
+      .lean();
+
+    const newStoragePath = objectPathFromPublicUrl(photoUrl);
+
     const updated = await UserProfile.findOneAndUpdate(
       { firebaseUid: uid },
-      { $set: { photo: photoUrl, profilePhoto: photoUrl, updatedAt: new Date() } },
+      {
+        $set: {
+          photo: photoUrl,
+          profilePhoto: photoUrl,
+          photoStoragePath: newStoragePath,
+          updatedAt: new Date(),
+        },
+      },
       { new: true, lean: true }
     );
 
@@ -260,6 +280,22 @@ router.patch(
       await authService.updateUser(uid, { photoURL: photoUrl });
     } catch (err) {
       console.warn('[profile/photo] could not update Firebase photoURL', {
+        userId: uid,
+        message: err?.message,
+      });
+    }
+
+    // 3) Best-effort cleanup of the OLD Supabase image — only AFTER the new
+    //    upload is already stored and MongoDB is updated. Old Firebase
+    //    Storage images are NEVER deleted here.
+    try {
+      const oldPath =
+        previous?.photoStoragePath || objectPathFromPublicUrl(previous?.photo);
+      if (oldPath && oldPath !== newStoragePath) {
+        await deleteObjectIfOwned(oldPath, uid);
+      }
+    } catch (err) {
+      console.warn('[profile/photo] old image cleanup skipped', {
         userId: uid,
         message: err?.message,
       });

@@ -47,6 +47,9 @@ const UserProfileSchema = new mongoose.Schema(
     photo: { type: String, default: null },
     profilePhoto: { type: String, default: null },
     coverPhoto: { type: String, default: null },
+    // Supabase Storage object path for the current `photo` (when hosted on
+    // Supabase). Null for legacy Firebase Storage URLs / external URLs.
+    photoStoragePath: { type: String, default: null },
 
     headline: { type: String, default: null },
     bio: { type: String, default: null },

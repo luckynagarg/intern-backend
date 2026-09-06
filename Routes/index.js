@@ -68,6 +68,10 @@ const messages = require("./messages");
 router.use("/messages", messages);
 
 
+// Authenticated image upload to Supabase Storage (replaces Firebase Storage)
+const upload = require("./upload");
+router.use("/upload", upload);
+
 // Public/community endpoints
 router.use("/public", publicRoutes);
 
