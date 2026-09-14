@@ -11,6 +11,7 @@ const mongoose = require("mongoose");
 const Job = require("../Model/Job");
 const Internship = require("../Model/Internship");
 const { badRequest, notFound } = require("../utils/httpErrors");
+const asyncHandler = require("../middleware/asyncHandler");
 
 function parseIntSafe(v, fallback) {
   const n = Number.parseInt(String(v ?? ""), 10);
@@ -19,7 +20,7 @@ function parseIntSafe(v, fallback) {
 
 // ----------------------------- Jobs -----------------------------
 
-router.get("/jobs", async (req, res) => {
+router.get("/jobs", asyncHandler(async (req, res) => {
   const page = Math.max(parseIntSafe(req.query.page, 1), 1);
   const limit = Math.min(Math.max(parseIntSafe(req.query.limit, 20), 1), 100);
   const skip = (page - 1) * limit;
@@ -45,9 +46,9 @@ router.get("/jobs", async (req, res) => {
     data: items,
     pagination: { page, limit, total, totalPages: Math.max(Math.ceil(total / limit), 1) },
   });
-});
+}));
 
-router.post("/jobs", async (req, res) => {
+router.post("/jobs", asyncHandler(async (req, res) => {
   const b = req.body || {};
   if (!b.title || !String(b.title).trim()) throw badRequest("title is required.");
   if (!b.company || !String(b.company).trim()) throw badRequest("company is required.");
@@ -70,9 +71,9 @@ router.post("/jobs", async (req, res) => {
   });
 
   return res.status(201).json({ success: true, data: job });
-});
+}));
 
-router.patch("/jobs/:id", async (req, res) => {
+router.patch("/jobs/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw badRequest("Invalid job id.");
 
@@ -88,19 +89,19 @@ router.patch("/jobs/:id", async (req, res) => {
   const updated = await Job.findByIdAndUpdate(id, { $set: allowed }, { new: true }).lean();
   if (!updated) throw notFound("Job not found.");
   return res.json({ success: true, data: updated });
-});
+}));
 
-router.delete("/jobs/:id", async (req, res) => {
+router.delete("/jobs/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw badRequest("Invalid job id.");
   const deleted = await Job.findByIdAndDelete(id).lean();
   if (!deleted) throw notFound("Job not found.");
   return res.json({ success: true, deleted: true });
-});
+}));
 
 // -------------------------- Internships --------------------------
 
-router.get("/internships", async (req, res) => {
+router.get("/internships", asyncHandler(async (req, res) => {
   const page = Math.max(parseIntSafe(req.query.page, 1), 1);
   const limit = Math.min(Math.max(parseIntSafe(req.query.limit, 20), 1), 100);
   const skip = (page - 1) * limit;
@@ -126,9 +127,9 @@ router.get("/internships", async (req, res) => {
     data: items,
     pagination: { page, limit, total, totalPages: Math.max(Math.ceil(total / limit), 1) },
   });
-});
+}));
 
-router.post("/internships", async (req, res) => {
+router.post("/internships", asyncHandler(async (req, res) => {
   const b = req.body || {};
   if (!b.title || !String(b.title).trim()) throw badRequest("title is required.");
   if (!b.company || !String(b.company).trim()) throw badRequest("company is required.");
@@ -151,9 +152,9 @@ router.post("/internships", async (req, res) => {
   });
 
   return res.status(201).json({ success: true, data: item });
-});
+}));
 
-router.patch("/internships/:id", async (req, res) => {
+router.patch("/internships/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw badRequest("Invalid internship id.");
 
@@ -169,14 +170,14 @@ router.patch("/internships/:id", async (req, res) => {
   const updated = await Internship.findByIdAndUpdate(id, { $set: allowed }, { new: true }).lean();
   if (!updated) throw notFound("Internship not found.");
   return res.json({ success: true, data: updated });
-});
+}));
 
-router.delete("/internships/:id", async (req, res) => {
+router.delete("/internships/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw badRequest("Invalid internship id.");
   const deleted = await Internship.findByIdAndDelete(id).lean();
   if (!deleted) throw notFound("Internship not found.");
   return res.json({ success: true, deleted: true });
-});
+}));
 
 module.exports = router;

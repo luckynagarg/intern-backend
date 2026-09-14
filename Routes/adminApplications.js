@@ -12,6 +12,7 @@ const mongoose = require("mongoose");
 const Application = require("../Model/Application");
 
 const { badRequest, notFound } = require("../utils/httpErrors");
+const asyncHandler = require("../middleware/asyncHandler");
 
 // Whitelist of allowed sort fields (prevents NoSQL / arbitrary sort injection).
 const ALLOWED_SORT = new Set([
@@ -34,7 +35,7 @@ function parseIntSafe(v, fallback) {
  * GET /api/admin/applications
  * Searchable, filterable, paginated list of ALL applications.
  */
-router.get("/", async (req, res) => {
+router.get("/", asyncHandler(async (req, res) => {
   const page = Math.max(parseIntSafe(req.query.page, 1), 1);
   const limit = Math.min(Math.max(parseIntSafe(req.query.limit, 20), 1), 100);
   const skip = (page - 1) * limit;
@@ -84,14 +85,14 @@ router.get("/", async (req, res) => {
       totalPages: Math.max(Math.ceil(total / limit), 1),
     },
   });
-});
+}));
 
 /**
  * PATCH /api/admin/applications/:id/status
  * Update an application's status (accepted/rejected/pending).
  * Validated ObjectId + enum before querying.
  */
-router.patch("/:id/status", async (req, res) => {
+router.patch("/:id/status", asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { status } = req.body || {};
 
@@ -109,10 +110,10 @@ router.patch("/:id/status", async (req, res) => {
   if (!updated) throw notFound("Application not found.");
 
   return res.status(200).json({ success: true, data: updated });
-});
+}));
 
 /** GET /api/admin/applications/:id — single application detail. */
-router.get("/:id", async (req, res) => {
+router.get("/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw badRequest("Invalid application id.");
 
@@ -120,6 +121,6 @@ router.get("/:id", async (req, res) => {
   if (!app) throw notFound("Application not found.");
 
   return res.status(200).json({ success: true, data: app });
-});
+}));
 
 module.exports = router;

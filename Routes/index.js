@@ -44,9 +44,12 @@ router.use("/admin", (req, res, next) => {
 router.use("/admin", admin);
 
 // Admin applications + jobs/internships management (protected by /admin guard above).
+// NOTE: adminApplications defines "/" as its list route, so it must be mounted
+// under /admin/applications — mounting it at /admin made every
+// /api/admin/applications request 404.
 const adminApplications = require("./adminApplications");
 const adminContent = require("./adminContent");
-router.use("/admin", adminApplications);
+router.use("/admin/applications", adminApplications);
 router.use("/admin", adminContent);
 
 // Job & internship CRUD

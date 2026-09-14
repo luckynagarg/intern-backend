@@ -180,6 +180,13 @@ async function verifyPaymentAndActivate({ userId, planKey, razorpayOrderId, razo
     { upsert: true }
   );
 
+  // Expire any OTHER lingering active docs (e.g. an older Free subscription)
+  // so quota resolution can never be shadowed by a stale document.
+  await Subscription.updateMany(
+    { userId, status: 'active', planKey: { $ne: plan.planKey } },
+    { $set: { status: 'expired' } }
+  );
+
   // invoice number
   const invoiceNumber = `INV-${userId.slice(0, 6).toUpperCase()}-${Date.now()}`;
   const invoicePdfPath = await generateInvoicePdf({

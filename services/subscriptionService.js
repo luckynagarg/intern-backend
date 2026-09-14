@@ -46,7 +46,10 @@ async function ensureSubscriptionDocForUser(userId) {
   const now = new Date();
 
   // If existing active subscription exists, return it if it isn't expired.
-  const active = await Subscription.findOne({ userId, status: 'active' }).sort({ endDate: 1 });
+  // Pick the user's BEST active subscription (latest endDate first). Sorting
+  // ascending here previously made an older Free subscription shadow a newly
+  // purchased bronze/silver/gold plan, so paid quotas never took effect.
+  const active = await Subscription.findOne({ userId, status: 'active' }).sort({ endDate: -1 });
 
   if (active) {
     // Treat subscription as expired if endDate is strictly before now.
@@ -82,8 +85,9 @@ async function ensureSubscriptionDocForUser(userId) {
 async function getActivePlanAndQuota(userId) {
   const now = new Date();
 
-  // Find the active subscription closest to expiration.
-  let sub = await Subscription.findOne({ userId, status: 'active' }).sort({ endDate: 1 });
+  // Find the user's BEST active subscription (latest endDate first) so a
+  // newly purchased paid plan always takes precedence over stale Free docs.
+  let sub = await Subscription.findOne({ userId, status: 'active' }).sort({ endDate: -1 });
 
   // Lazy expiration: if an active sub has an endDate in the past, mark it expired.
   if (sub && sub.endDate && sub.endDate.getTime() < now.getTime()) {
